@@ -8,47 +8,8 @@
 
   let me = null, friends = [], incoming = [], sent = [], chats = [], tab = 'today';
 
-  // Демо-режим (превью без сервера): локальная заглушка API с подписанными демо-друзьями
-  const mock = DEMO && (() => {
-    const t = Date.now(), users = [
-      { id: 2, username: 'masha.demo', name: 'Маша (демо)', avatar: '', bio: '', stats: { streak: 12 } },
-      { id: 3, username: 'artem.demo', name: 'Артём (демо)', avatar: '', bio: '', stats: { streak: 4 } },
-      { id: 4, username: 'katya.demo', name: 'Катя (демо)', avatar: '', bio: '', stats: {} } ];
-    const st = { me: { id: 1, username: 'you', name: 'Вы', avatar: '', bio: '', stats: {}, healthToken: 'demo-token' }, fr: { 2: 'friends', 3: 'friends', 4: 'incoming' }, id: 10,
-      msgs: [ { id: 1, from: 2, to: 1, kind: 'text', body: 'Привет! Как питание сегодня?', created: t - 36e5 },
-        { id: 2, from: 2, to: 1, kind: 'meal', body: 'мой обед', media: '', meta: { title: 'Плов с салатом', kcal: 640, p: 28, f: 24, c: 76 }, created: t - 30e5 },
-        { id: 3, from: 3, to: 1, kind: 'text', body: 'Завтра на площадку в 8?', created: t - 9e5 } ], media: {} };
-    const pubU = u => ({ ...u, state: st.fr[u.id] || 'none' });
-    return async (path, o) => {
-      await new Promise(r => setTimeout(r, 120));
-      const u = new URL(path, location.href), p = u.pathname, M = o.method || 'GET', body = typeof o.body === 'string' ? JSON.parse(o.body || '{}') : o.body;
-      if (p === '/api/me') return { me: st.me };
-      if (p === '/api/users') { const q = (u.searchParams.get('q') || '').toLowerCase(); return { users: users.filter(x => (x.username + x.name).toLowerCase().includes(q)).map(pubU) }; }
-      if (p === '/api/friends') return { friends: users.filter(x => st.fr[x.id] === 'friends'), incoming: users.filter(x => st.fr[x.id] === 'incoming'), sent: users.filter(x => st.fr[x.id] === 'sent') };
-      const fm = /^\/api\/friends\/(\d+)$/.exec(p);
-      if (fm) { const id = +fm[1]; st.fr[id] = M === 'DELETE' ? 'none' : st.fr[id] === 'incoming' ? 'friends' : st.fr[id] === 'friends' ? 'friends' : 'friends'; return { state: st.fr[id] }; }
-      if (p === '/api/media') { const id = 'demo' + (++st.id); st.media[id] = URL.createObjectURL(o.body); return { id, url: st.media[id] }; }
-      if (p === '/api/chats') {
-        const peers = [...new Set(st.msgs.map(m => m.from === 1 ? m.to : m.from))];
-        const chats = peers.map(pid => { const ms = st.msgs.filter(m => m.from === pid || m.to === pid); return { peer: users.find(x => x.id === pid), last: ms[ms.length - 1], unread: ms.filter(m => m.from === pid && !m.read).length }; })
-          .sort((a, b) => b.last.created - a.last.created);
-        return { chats, unreadTotal: chats.reduce((a, c) => a + c.unread, 0) };
-      }
-      const cm = /^\/api\/chats\/(\d+)$/.exec(p);
-      if (cm) {
-        const pid = +cm[1];
-        if (M === 'GET') { const after = +u.searchParams.get('after') || 0; const ms = st.msgs.filter(m => (m.from === pid || m.to === pid) && m.id > after); ms.forEach(m => { if (m.from === pid) m.read = true; });
-          return { messages: ms, peer: users.find(x => x.id === pid), peerRead: 0, friends: st.fr[pid] === 'friends' }; }
-        const m = { id: ++st.id, from: 1, to: pid, kind: body.kind, body: body.body || '', media: body.media ? st.media[body.media] : '', meta: body.meta || null, created: Date.now() };
-        st.msgs.push(m); return { message: m };
-      }
-      if (/^\/api\/messages\//.test(p)) { const id = +p.split('/').pop(); st.msgs = st.msgs.filter(m => m.id !== id); return { ok: true }; }
-      if (p === '/api/health') return { days: [] };
-      if (p === '/api/sync') return M === 'GET' ? { data: null } : { ok: true };
-      if (p === '/api/auth/logout') return { ok: true };
-      throw new Error('Недоступно в демо');
-    };
-  })();
+  // В превью без сервера подключается внешняя заглушка (demo/mock-api.js); в проекте её нет.
+  const mock = window.HFMockApi || null;
 
   async function api(path, opts = {}) {
     if (mock) return mock(path, opts);
@@ -66,6 +27,9 @@
     return el;
   };
   const avaHTML = (u, cls = '') => u?.avatar ? `<span class="avatar ${cls}" style="background-image:url('${esc(u.avatar)}')"></span>` : `<span class="avatar ${cls}">${esc((u?.name || '?').charAt(0).toUpperCase())}</span>`;
+  const flameBadge = f => !f || f.state === 'none' ? '' :
+    `<i class="flame-b ${f.state}" title="${f.state === 'out' ? 'Огонёк погас' : f.state === 'risk' ? 'Напишите друг другу сегодня' : 'Огонёк дружбы'}"><svg><use href="#i-flame"/></svg>${f.count}</i>`;
+  const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 12 || h > 14) ? b : c; };
   const timeAgo = t => {
     const d = new Date(t), n = new Date();
     if (d.toDateString() === n.toDateString()) return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
@@ -76,7 +40,7 @@
 
   /* ================= account ================= */
   async function boot() {
-    if (DEMO) { me = (await api('/api/me')).me; renderAuth(); renderAccountCard(); renderHealthCard(); refreshSocial(); return; }
+    if (DEMO) { try { me = (await api('/api/me')).me; } catch { me = null; } renderAuth(); renderAccountCard(); renderHealthCard(); if (me) refreshSocial(); return; }
     try { me = (await api('/api/me')).me; } catch { me = null; }
     renderAuth(); renderAccountCard(); renderHealthCard();
     if (me) { refreshSocial(); pullHealth(); restoreIfEmpty(); }
@@ -96,7 +60,6 @@
         <p class="form-err" id="authErr" role="alert"></p>
         <button class="btn btn-primary" type="submit" id="authSubmit">Создать аккаунт</button>
       </form>
-      ${DEMO ? '<p class="sub small">В демо-превью сервер недоступен — аккаунты заработают на вашем сервере.</p>' : ''}
     </div>`;
     let mode = 'reg';
     box.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => {
@@ -112,7 +75,6 @@
       if (!f.get('name') && HF.db.profile.name && mode === 'reg') f.set('name', HF.db.profile.name);
       btn.disabled = true; $('#authErr').textContent = '';
       try {
-        if (DEMO) throw new Error('В демо-превью сервер недоступен');
         const r = await api(mode === 'reg' ? '/api/auth/register' : '/api/auth/login', { method: 'POST',
           body: { name: f.get('name'), username: f.get('username'), password: f.get('password') } });
         me = r.me; HF.toast(mode === 'reg' ? `Добро пожаловать, ${me.name}!` : 'Вы вошли');
@@ -139,9 +101,29 @@
     const c = $('#accountCard'); if (!c) return;
     if (!me) { c.innerHTML = `<h2 class="h2">Аккаунт</h2><p class="sub">Войдите, чтобы дружить, переписываться и хранить копию дневника в облаке.</p><button class="btn btn-ghost" id="goAuth">Войти или создать</button>`;
       $('#goAuth').onclick = () => HF.showTab('chats'); return; }
-    c.innerHTML = `<div class="row-between"><div><h2 class="h2">@${esc(me.username)}</h2><p class="sub" id="syncInfo">Копия дневника в облаке включена</p></div>
-      <button class="btn btn-ghost btn-sm" id="logoutBtn">Выйти</button></div>`;
+    c.innerHTML = `<div class="row-between"><div><h2 class="h2">Аккаунт</h2><p class="sub" id="syncInfo">Копия дневника в облаке включена</p></div>
+      <button class="btn btn-ghost btn-sm" id="logoutBtn">Выйти</button></div>
+      <label class="field"><span class="field-label">Короткое имя — по нему вас находят друзья</span>
+        <span class="uname"><span>@</span><input class="input" id="unameInput" maxlength="20" autocapitalize="none" spellcheck="false" autocomplete="username" value="${esc(me.username)}"></span></label>
+      <p class="sub small" id="unameHint"></p>`;
+    const ui = $('#unameInput');
+    ui.addEventListener('input', () => checkName(ui.value, $('#unameHint'), me.username));
+    ui.addEventListener('change', async () => {
+      const v = ui.value.trim(); if (!v || v === me.username) return;
+      try { me = { ...me, ...(await api('/api/me', { method: 'PATCH', body: { username: v } })).me }; HF.toast(`Теперь вы @${me.username}`); $('#unameHint').textContent = ''; }
+      catch (e) { HF.toast(e.message); ui.value = me.username; $('#unameHint').textContent = ''; }
+    });
     $('#logoutBtn').onclick = async () => { try { await api('/api/auth/logout', { method: 'POST' }); } catch {} me = null; boot(); HF.toast('Вы вышли'); };
+  }
+
+  let checkT;
+  function checkName(v, hintEl, current) {
+    clearTimeout(checkT); v = v.trim();
+    if (!v || v === current) { hintEl.textContent = ''; hintEl.className = 'sub small'; return Promise.resolve(null); }
+    return new Promise(res => { checkT = setTimeout(async () => {
+      try { const r = await api('/api/auth/check?username=' + encodeURIComponent(v));
+        hintEl.textContent = r.available ? `@${v} свободно` : (r.reason || `@${v} уже занято`); hintEl.className = 'sub small ' + (r.available ? 'ok' : 'bad'); res(r.available); }
+      catch { hintEl.textContent = ''; res(null); } }, 350); });
   }
 
   /* profile → server: имя/аватар/статистика */
@@ -240,7 +222,7 @@
     row.innerHTML = friends.length ? '' : `<p class="sub friend-empty">Найдите друзей по логину через поиск выше.</p>`;
     for (const u of friends) {
       const b = document.createElement('button'); b.className = 'friend';
-      b.innerHTML = `${avaHTML(u, 'friend-ava')}<span>${esc(u.name)}</span>${u.stats?.streak ? `<i class="mini-streak"><svg><use href="#i-flame"/></svg>${u.stats.streak}</i>` : ''}`;
+      b.innerHTML = `${avaHTML(u, 'friend-ava')}<span>${esc(u.name)}</span>${u.flame && u.flame.state !== 'none' ? `<span class="mini-flame">${flameBadge(u.flame)}</span>` : ''}`;
       b.onclick = () => openChat(u);
       row.appendChild(b);
     }
@@ -258,7 +240,7 @@
     if (!chats.length) list.innerHTML = `<li class="sub chat-empty">Пока нет сообщений. Сфотографируйте еду и нажмите «Поделиться» — или откройте друга сверху.</li>`;
     for (const c of chats) {
       const li = document.createElement('li'), b = document.createElement('button'); b.className = 'chat-row' + (c.unread ? ' unread' : '');
-      b.innerHTML = `${avaHTML(c.peer)}<span class="cr-main"><b>${esc(c.peer.name)}</b><small>${c.last.from === me.id ? 'Вы: ' : ''}${esc(preview(c.last))}</small></span>
+      b.innerHTML = `${avaHTML(c.peer)}<span class="cr-main"><b>${esc(c.peer.name)} ${flameBadge(c.peer.flame)}</b><small>${c.last.from === me.id ? 'Вы: ' : ''}${esc(preview(c.last))}</small></span>
         <span class="cr-side"><small>${timeAgo(c.last.created)}</small>${c.unread ? `<i class="dot">${c.unread}</i>` : ''}</span>`;
       b.onclick = () => openChat(c.peer);
       li.appendChild(b); list.appendChild(li);
@@ -297,13 +279,13 @@
   let peer = null, lastId = 0, chatPoll = null, peerRead = 0;
   async function openChat(u) {
     peer = u; lastId = 0; peerRead = 0;
-    ava($('#chatAva'), u); $('#chatName').textContent = u.name; $('#chatSub').textContent = '@' + u.username;
+    ava($('#chatAva'), u); $('#chatName').textContent = u.name; $('#chatSub').textContent = '@' + u.username; $('#flameBanner').hidden = true;
     $('#msgs').innerHTML = ''; $('#msgInput').value = ''; updateSendBtn();
     HF.openDialog(chatEl, '#msgInput');
     await loadMsgs();
     clearInterval(chatPoll); chatPoll = setInterval(() => { if (!document.hidden) loadMsgs(); }, 3000);
   }
-  function closeChat() { clearInterval(chatPoll); stopRec(true); stopCircle(true); HF.closeDialog(chatEl); peer = null; refreshSocial(); }
+  function closeChat() { clearInterval(chatPoll); if (R) recFinish(false); HF.closeDialog(chatEl); peer = null; refreshSocial(); }
   $('#chatBack').onclick = closeChat;
   async function loadMsgs() {
     if (!peer) return;
@@ -312,9 +294,32 @@
       const sc = $('#chatScroll'), atBottom = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80;
       for (const m of r.messages) { appendMsg(m); lastId = Math.max(lastId, m.id); }
       if (r.peerRead !== peerRead) { peerRead = r.peerRead; markRead(); }
-      if (!r.friends) $('#chatSub').textContent = 'Вы больше не друзья — писать нельзя';
+      if (!r.friends) $('#chatSub').textContent = 'Вы больше не друзья — писать нельзя'; else renderFlame(r.peer?.flame);
       if (r.messages.length && (atBottom || lastId === r.messages[r.messages.length - 1].id)) sc.scrollTop = sc.scrollHeight;
     } catch {}
+  }
+  function renderFlame(f) {
+    const sub = $('#chatSub'), ban = $('#flameBanner');
+    if (!f || f.state === 'none') {
+      sub.textContent = '@' + peer.username + (f && f.count ? ` · ${f.count} ${plural(f.count, 'день', 'дня', 'дней')} подряд — ещё ${3 - f.count} до огонька` : '');
+      ban.hidden = true; return;
+    }
+    const days = `${f.count} ${plural(f.count, 'день', 'дня', 'дней')}`;
+    sub.innerHTML = f.state === 'active' ? `${flameBadge(f)} огонёк дружбы · ${days}`
+      : f.state === 'risk' ? `${flameBadge(f)} ${f.todayMine ? 'ждём ответа сегодня' : 'напишите сегодня, чтобы не погас'}`
+      : `${flameBadge(f)} огонёк погас`;
+    if (f.state === 'out') {
+      ban.hidden = false;
+      ban.innerHTML = f.canRestore
+        ? `<p><b>Огонёк на ${days} погас.</b> Восстановить можно только один раз.</p><button class="btn btn-primary btn-sm" id="flameRestore">Восстановить</button>`
+        : `<p><b>Огонёк погас.</b> Восстановление уже использовано — начните новую серию: пишите друг другу 3 дня подряд.</p>`;
+      const b = $('#flameRestore');
+      if (b) b.onclick = async () => {
+        b.disabled = true;
+        try { const r = await api(`/api/friends/${peer.id}/restore`, { method: 'POST' }); renderFlame(r.flame); HF.toast('Огонёк снова горит. Больше восстановить нельзя'); }
+        catch (e) { HF.toast(e.message); b.disabled = false; }
+      };
+    } else ban.hidden = true;
   }
   function markRead() { document.querySelectorAll('.msg.mine').forEach(el => el.classList.toggle('seen', +el.dataset.id <= peerRead)); }
   function appendMsg(m) {
@@ -364,100 +369,133 @@
       $('#chatScroll').scrollTop = $('#chatScroll').scrollHeight; return true; }
     catch (e) { HF.toast(e.message); return false; }
   }
+  /* --- composer: одна кнопка как в Telegram ---
+     текст есть → отправить; пусто → быстрый тап переключает «голос ↔ кружок»,
+     удержание пишет, отпустил — отправилось; влево — отмена; вверх — запись без рук. */
+  const pickType = list => (window.MediaRecorder && list.find(t => MediaRecorder.isTypeSupported(t))) || '';
+  let recMode = 'voice'; try { recMode = localStorage.getItem('hf.recMode') === 'video' ? 'video' : 'voice'; } catch {}
+  let R = null, press = null;
+  const sendBtn = $('#sendBtn');
   function updateSendBtn() {
-    const has = $('#msgInput').value.trim().length > 0, b = $('#sendBtn');
-    b.innerHTML = `<svg><use href="#${has ? 'i-send' : 'i-mic'}"/></svg>`; b.setAttribute('aria-label', has ? 'Отправить' : 'Записать голосовое');
+    const has = $('#msgInput').value.trim().length > 0;
+    if (R) return;
+    sendBtn.innerHTML = `<svg><use href="#${has ? 'i-send' : recMode === 'video' ? 'i-circle' : 'i-mic'}"/></svg>`;
+    sendBtn.setAttribute('aria-label', has ? 'Отправить' : recMode === 'video'
+      ? 'Видеосообщение: удерживайте, чтобы записать; нажмите, чтобы переключить на голосовое'
+      : 'Голосовое: удерживайте, чтобы записать; нажмите, чтобы переключить на кружок');
   }
   $('#msgInput').addEventListener('input', updateSendBtn);
-  $('#msgInput').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#sendBtn').click(); } });
-  $('#sendBtn').onclick = async () => {
-    const text = $('#msgInput').value.trim();
-    if (text) { $('#msgInput').value = ''; updateSendBtn(); if (!(await sendMsg({ kind: 'text', body: text }))) $('#msgInput').value = text; return; }
-    startRec();
-  };
-
-  /* --- voice --- */
-  const pickType = list => (window.MediaRecorder && list.find(t => MediaRecorder.isTypeSupported(t))) || '';
-  let rec = null;
-  async function startRec() {
-    if (!window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) { HF.toast('Запись голоса не поддерживается в этом браузере'); return; }
-    let stream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
-    catch { HF.toast('Нет доступа к микрофону — разрешите его в настройках браузера'); return; }
-    const type = pickType(['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus']);
-    const mr = new MediaRecorder(stream, type ? { mimeType: type, audioBitsPerSecond: 48000 } : undefined), chunks = [];
-    mr.ondataavailable = e => e.data.size && chunks.push(e.data);
-    rec = { mr, stream, chunks, t0: Date.now(), timer: setInterval(() => {
-      const s = Math.floor((Date.now() - rec.t0) / 1000); $('#recTime').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-      if (s >= 300) $('#recSend').click(); }, 250) };
-    mr.start(250);
-    $('#composer').hidden = true; $('#recBar').hidden = false; $('#recTime').textContent = '0:00'; $('#recSend').focus();
+  $('#msgInput').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendText(); } });
+  async function sendText() {
+    const text = $('#msgInput').value.trim(); if (!text) return;
+    $('#msgInput').value = ''; updateSendBtn();
+    if (!(await sendMsg({ kind: 'text', body: text }))) { $('#msgInput').value = text; updateSendBtn(); }
   }
-  function stopRec(cancel) {
-    if (!rec) return Promise.resolve(null);
-    const r = rec; rec = null; clearInterval(r.timer);
-    $('#composer').hidden = false; $('#recBar').hidden = true;
-    return new Promise(res => {
-      r.mr.onstop = () => { r.stream.getTracks().forEach(t => t.stop()); res(cancel ? null : { blob: new Blob(r.chunks, { type: (r.mr.mimeType || 'audio/webm').split(';')[0] }), dur: (Date.now() - r.t0) / 1000 }); };
-      try { r.mr.stop(); } catch { r.stream.getTracks().forEach(t => t.stop()); res(null); }
-    });
+  function toggleMode() {
+    recMode = recMode === 'voice' ? 'video' : 'voice';
+    try { localStorage.setItem('hf.recMode', recMode); } catch {}
+    sendBtn.classList.remove('flip'); void sendBtn.offsetWidth; sendBtn.classList.add('flip');
+    updateSendBtn();
+    let seen = false; try { seen = localStorage.getItem('hf.recHint') === '1'; localStorage.setItem('hf.recHint', '1'); } catch {}
+    if (!seen) HF.toast(recMode === 'video' ? 'Кружок: удерживайте кнопку, чтобы записать' : 'Голосовое: удерживайте кнопку, чтобы записать');
   }
-  $('#recCancel').onclick = () => stopRec(true);
-  $('#recSend').onclick = async () => {
-    const out = await stopRec(false); if (!out) return;
-    if (out.dur < 0.8) { HF.toast('Слишком коротко'); return; }
-    try { const up = await api('/api/media', { method: 'POST', body: out.blob }); await sendMsg({ kind: 'voice', media: up.id, meta: { dur: out.dur } }); }
-    catch (e) { HF.toast(e.message); }
-  };
 
-  /* --- video circle --- */
-  let circ = null;
-  $('#recCircle').onclick = async () => {
-    if (!window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) { HF.toast('Видеосообщения не поддерживаются в этом браузере'); return; }
-    let stream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 480 } } }); }
-    catch { HF.toast('Нет доступа к камере или микрофону'); return; }
-    circ = { stream, rec: null, chunks: [], blob: null, t0: 0, timer: null };
-    const v = $('#circleVideo'); v.srcObject = stream; v.muted = true; v.play().catch(() => {});
-    $('#circleRec').hidden = false; $('#circleSend').disabled = true; $('#circleShot').classList.remove('on');
-    $('#circleTime').textContent = 'Нажмите, чтобы записать · до 60 с'; setProg(0); $('#circleShot').focus();
-  };
-  function setProg(p) { const c = $('#circleProg'), len = 2 * Math.PI * 48; c.style.strokeDasharray = len; c.style.strokeDashoffset = len * (1 - p); }
-  $('#circleShot').onclick = () => {
-    if (!circ) return;
-    if (circ.rec) { finishCircle(); return; }
-    const type = pickType(['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']);
-    circ.rec = new MediaRecorder(circ.stream, type ? { mimeType: type, videoBitsPerSecond: 900_000 } : undefined);
-    circ.rec.ondataavailable = e => e.data.size && circ.chunks.push(e.data);
-    circ.rec.start(250); circ.t0 = Date.now(); $('#circleShot').classList.add('on'); $('#circleShot').setAttribute('aria-label', 'Остановить запись');
-    circ.timer = setInterval(() => { const s = (Date.now() - circ.t0) / 1000; setProg(s / 60); $('#circleTime').textContent = `${Math.floor(s)} с`; if (s >= 60) finishCircle(); }, 100);
-  };
-  function finishCircle() {
-    if (!circ?.rec) return;
-    clearInterval(circ.timer); const c = circ;
-    c.rec.onstop = () => {
-      c.blob = new Blob(c.chunks, { type: (c.rec.mimeType || 'video/webm').split(';')[0] }); c.dur = (Date.now() - c.t0) / 1000;
-      c.stream.getTracks().forEach(t => t.stop());
-      const v = $('#circleVideo'); v.srcObject = null; v.src = URL.createObjectURL(c.blob); v.muted = false; v.loop = true; v.play().catch(() => {});
-      $('#circleSend').disabled = false; $('#circleShot').classList.remove('on'); $('#circleShot').disabled = true;
-      $('#circleTime').textContent = `Готово · ${Math.round(c.dur)} с — отправить?`; $('#circleSend').focus();
+  function pressStart(x, y) {
+    if ($('#msgInput').value.trim()) return;
+    if (R?.locked) { recFinish(true); return; }
+    press = { x, y, t: Date.now(), timer: setTimeout(() => { press.held = true; recStart(); }, 220) };
+  }
+  function pressMove(x, y) {
+    if (!press?.held || !R || R.locked) return;
+    const dx = x - press.x, dy = y - press.y;
+    R.cancelArmed = dx < -90; $('#chat').classList.toggle('rec-cancel', R.cancelArmed);
+    if (dy < -70 && !R.cancelArmed) lockRec();
+  }
+  function pressEnd() {
+    if (!press) return;
+    clearTimeout(press.timer); const p = press; press = null;
+    if (!p.held) { if ($('#msgInput').value.trim()) sendText(); else toggleMode(); return; }
+    if (!R || R.locked) return;
+    recFinish(!R.cancelArmed);
+  }
+  sendBtn.addEventListener('pointerdown', e => {
+    if ($('#msgInput').value.trim()) return;           // с текстом работает обычный click
+    e.preventDefault(); sendBtn.setPointerCapture?.(e.pointerId); pressStart(e.clientX, e.clientY);
+  });
+  sendBtn.addEventListener('pointermove', e => pressMove(e.clientX, e.clientY));
+  sendBtn.addEventListener('pointerup', pressEnd);
+  sendBtn.addEventListener('pointercancel', () => { if (press) { clearTimeout(press.timer); if (press.held && R && !R.locked) recFinish(false); press = null; } });
+  sendBtn.addEventListener('contextmenu', e => e.preventDefault());
+  sendBtn.addEventListener('click', e => { if ($('#msgInput').value.trim()) sendText(); else if (e.detail === 0 && !press) toggleMode(); });
+  // клавиатура: пробел — удержание (запись), Enter — переключение / отправка
+  sendBtn.addEventListener('keydown', e => { if (e.key === ' ' && !e.repeat && !$('#msgInput').value.trim()) { e.preventDefault(); pressStart(0, 0); } });
+  sendBtn.addEventListener('keyup', e => { if (e.key === ' ') { e.preventDefault(); pressEnd(); } });
+
+  function setRecUI(on) {
+    const c = $('#chat');
+    c.classList.toggle('rec-on', on); c.classList.toggle('rec-voice', on && R?.mode === 'voice'); c.classList.toggle('rec-video', on && R?.mode === 'video');
+    if (!on) c.classList.remove('rec-locked', 'rec-cancel');
+    $('#recStatus').hidden = !on; $('#msgInput').hidden = on; $('#recTrash').hidden = !(on && R?.locked);
+    $('#circleRec').hidden = !(on && R?.mode === 'video');
+    if (on) { $('#recTime').textContent = '0:00'; $('#recHint').textContent = '‹ влево — отмена'; setProg(0); }
+    if (on && R?.locked) sendBtn.innerHTML = '<svg><use href="#i-send"/></svg>';
+    if (!on) updateSendBtn();
+  }
+  function setProg(p) { const c = $('#circleProg'), len = 2 * Math.PI * 48; c.style.strokeDasharray = len; c.style.strokeDashoffset = len * (1 - Math.min(1, p)); }
+  function lockRec() {
+    if (!R || R.locked) return;
+    R.locked = true; press = null;
+    $('#chat').classList.add('rec-locked'); $('#recTrash').hidden = false; $('#recHint').textContent = 'запись без рук';
+    sendBtn.innerHTML = '<svg><use href="#i-send"/></svg>'; sendBtn.setAttribute('aria-label', 'Остановить и отправить');
+  }
+
+  async function recStart() {
+    if (!window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) { HF.toast('Запись не поддерживается в этом браузере'); return; }
+    const r = R = { mode: recMode, chunks: [], locked: false, ready: false, t0: 0 };
+    setRecUI(true);
+    if (navigator.vibrate) navigator.vibrate(15);
+    try {
+      r.stream = await navigator.mediaDevices.getUserMedia(r.mode === 'voice'
+        ? { audio: { echoCancellation: true, noiseSuppression: true } }
+        : { audio: true, video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 480 } } });
+    } catch {
+      if (R === r) { R = null; setRecUI(false); }
+      HF.toast(r.mode === 'voice' ? 'Нет доступа к микрофону — разрешите его и удерживайте кнопку ещё раз' : 'Нет доступа к камере — разрешите её и удерживайте кнопку ещё раз');
+      return;
+    }
+    if (R !== r) { r.stream.getTracks().forEach(t => t.stop()); return; }   // отпустили раньше, чем включилась камера
+    if (r.mode === 'video') { const v = $('#circleVideo'); v.srcObject = r.stream; v.muted = true; v.play().catch(() => {}); }
+    const type = r.mode === 'voice' ? pickType(['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus'])
+      : pickType(['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']);
+    const opts = type ? (r.mode === 'voice' ? { mimeType: type, audioBitsPerSecond: 48000 } : { mimeType: type, videoBitsPerSecond: 900_000 }) : undefined;
+    r.mr = new MediaRecorder(r.stream, opts);
+    r.mr.ondataavailable = e => e.data.size && r.chunks.push(e.data);
+    r.mr.start(250); r.t0 = Date.now(); r.ready = true;
+    const max = r.mode === 'voice' ? 300 : 60;
+    r.timer = setInterval(() => {
+      const s = (Date.now() - r.t0) / 1000;
+      $('#recTime').textContent = `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+      if (r.mode === 'video') setProg(s / max);
+      if (s >= max) recFinish(true);
+    }, 100);
+  }
+  function recFinish(send) {
+    const r = R; if (!r) return;
+    R = null; clearInterval(r.timer); setRecUI(false);
+    const v = $('#circleVideo'); v.pause(); v.srcObject = null;
+    if (!r.ready) { r.aborted = true; if (send) HF.toast('Удерживайте кнопку, чтобы записать'); return; }
+    r.mr.onstop = async () => {
+      r.stream.getTracks().forEach(t => t.stop());
+      if (!send) return;
+      const dur = (Date.now() - r.t0) / 1000;
+      if (dur < 0.8) { HF.toast('Слишком коротко'); return; }
+      const blob = new Blob(r.chunks, { type: (r.mr.mimeType || (r.mode === 'voice' ? 'audio/webm' : 'video/webm')).split(';')[0] });
+      try { const up = await api('/api/media', { method: 'POST', body: blob }); await sendMsg({ kind: r.mode === 'voice' ? 'voice' : 'video', media: up.id, meta: { dur } }); }
+      catch (e) { HF.toast(e.message); }
     };
-    c.rec.stop();
+    try { r.mr.stop(); } catch { r.stream.getTracks().forEach(t => t.stop()); }
   }
-  function stopCircle() {
-    if (!circ) return; clearInterval(circ.timer);
-    try { circ.rec?.state === 'recording' && circ.rec.stop(); } catch {}
-    circ.stream.getTracks().forEach(t => t.stop());
-    const v = $('#circleVideo'); v.pause(); if (v.src.startsWith('blob:')) URL.revokeObjectURL(v.src); v.removeAttribute('src'); v.srcObject = null;
-    circ = null; $('#circleRec').hidden = true; $('#circleShot').disabled = false;
-  }
-  $('#circleCancel').onclick = () => stopCircle();
-  $('#circleSend').onclick = async () => {
-    if (!circ?.blob) return; const { blob, dur } = circ; $('#circleSend').disabled = true;
-    $('#circleTime').textContent = 'Отправляю…';
-    try { const up = await api('/api/media', { method: 'POST', body: blob }); await sendMsg({ kind: 'video', media: up.id, meta: { dur } }); stopCircle(); }
-    catch (e) { HF.toast(e.message); $('#circleSend').disabled = false; $('#circleTime').textContent = 'Не отправилось — попробуйте ещё раз'; }
-  };
+  $('#recTrash').onclick = () => recFinish(false);
 
   /* ================= share (TikTok-style) ================= */
   let shareData = null; const picked = new Set();
@@ -495,8 +533,14 @@
   /* ================= hooks ================= */
   window.HFSocial = {
     onTab(name) { tab = name; if (name === 'chats') { renderAuth(); if (me) { renderInbox(); refreshSocial(); } } if (name === 'profile') { renderAccountCard(); renderHealthCard(); } },
-    onSave, shareMeal,
+    onSave, shareMeal, checkName,
+    get me() { return me; },
+    async auth(mode, data) {
+      const r = await api(mode === 'reg' ? '/api/auth/register' : '/api/auth/login', { method: 'POST', body: data });
+      me = r.me; if (mode === 'reg') await pushProfile(); else await restoreIfEmpty(true);
+      boot(); return me;
+    },
   };
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !chatEl.hidden && document.querySelector('.sheet-wrap:not([hidden])') === null) { e.stopPropagation(); if (circ) stopCircle(); else if (rec) stopRec(true); else closeChat(); } }, true);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !chatEl.hidden && document.querySelector('.sheet-wrap:not([hidden])') === null) { e.stopPropagation(); if (R) recFinish(false); else closeChat(); } }, true);
   boot();
 })();

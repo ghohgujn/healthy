@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, sender INTEGER NOT 
 CREATE INDEX IF NOT EXISTS msg_pair ON messages (sender, recipient, id);
 CREATE INDEX IF NOT EXISTS msg_rcpt ON messages (recipient, id);
 CREATE TABLE IF NOT EXISTS media (id TEXT PRIMARY KEY, owner INTEGER NOT NULL, type TEXT NOT NULL, size INTEGER NOT NULL, created INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS flame_restores (a INTEGER NOT NULL, b INTEGER NOT NULL, day TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (a, b));
 CREATE TABLE IF NOT EXISTS health (user_id INTEGER NOT NULL, date TEXT NOT NULL, steps INTEGER, active_kcal INTEGER, source TEXT, updated INTEGER NOT NULL,
   PRIMARY KEY (user_id, date));
 `);
@@ -75,6 +76,7 @@ function startSession(res, userId) {
   q('INSERT INTO sessions (token, user_id, created) VALUES (?, ?, ?)').run(sha(t), userId, now());
   res.setHeader('Set-Cookie', `hf=${t}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${SECURE ? '; Secure' : ''}`);
 }
+const withFlame = (me, u) => u && ({ ...pub(u), flame: flame(me, u.id) });
 const pub = u => u && { id: u.id, username: u.username, name: u.name, avatar: u.avatar ? `/media/${u.avatar}` : '', bio: u.bio || '', stats: JSON.parse(u.stats || '{}') };
 const friendState = (me, other) => {
   const f = q('SELECT * FROM friends WHERE a = ? AND b = ?').get(Math.min(me, other), Math.max(me, other));
@@ -85,6 +87,29 @@ const friendState = (me, other) => {
 };
 const areFriends = (a, b) => friendState(a, b) === 'friends';
 const USERNAME = /^[a-z0-9_.]{3,20}$/i;
+
+/* ---------------- огонёк дружбы ---------------- */
+// День засчитывается, если оба написали друг другу хотя бы по одному сообщению.
+// 3+ дня подряд — огонёк горит. Пропущен один день — гаснет; восстановить можно один раз на пару.
+const TZ = process.env.APP_TZ || 'Europe/Moscow';
+const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
+const dayKey = t => dayFmt.format(new Date(t));
+const prevDay = k => { const d = new Date(k + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); };
+function flame(me, other) {
+  const rows = q(`SELECT sender, created FROM messages WHERE ((sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)) AND created > ?`)
+    .all(me, other, other, me, now() - 400 * 864e5);
+  const mine = new Set(), theirs = new Set();
+  for (const r of rows) (r.sender === me ? mine : theirs).add(dayKey(r.created));
+  const restored = q('SELECT day FROM flame_restores WHERE a = ? AND b = ?').get(Math.min(me, other), Math.max(me, other));
+  const mutual = d => (mine.has(d) && theirs.has(d)) || restored?.day === d;
+  const run = from => { let n = 0, d = from; while (mutual(d)) { n++; d = prevDay(d); } return n; };
+  const today = dayKey(now()), yest = prevDay(today);
+  const todayDone = mutual(today), count = todayDone ? run(today) : run(yest);
+  if (count >= 3) return { count, state: todayDone ? 'active' : 'risk', canRestore: false, todayMine: mine.has(today), todayTheirs: theirs.has(today) };
+  const lost = !mutual(yest) ? run(prevDay(yest)) : 0;
+  if (lost >= 3) return { count: lost, state: 'out', canRestore: !restored, restoreDay: yest };
+  return { count, state: 'none', canRestore: false, todayMine: mine.has(today), todayTheirs: theirs.has(today) };
+}
 
 /* ---------------- AI analyze (ProxyAPI) ---------------- */
 const MODELS = {
@@ -241,6 +266,12 @@ async function api(req, res, url) {
     startSession(res, Number(r.lastInsertRowid));
     return send(res, 200, { me: pub(q('SELECT * FROM users WHERE id = ?').get(r.lastInsertRowid)) });
   }
+  if (p === '/api/auth/check' && M === 'GET') {
+    rate('check:' + ipOf(req), 120, 60_000);
+    const u = String(url.searchParams.get('username') || '').trim();
+    if (!USERNAME.test(u)) return send(res, 200, { available: false, reason: 'Только латиница, цифры, точка и _, 3–20 символов' });
+    return send(res, 200, { available: !q('SELECT 1 FROM users WHERE username = ?').get(u) });
+  }
   if (p === '/api/auth/login' && M === 'POST') {
     rate('login:' + ipOf(req), 20, 900_000);
     const b = await json(req);
@@ -269,7 +300,13 @@ async function api(req, res, url) {
     const stats = b.stats && typeof b.stats === 'object' ? JSON.stringify({
       streak: Math.max(0, Math.min(10000, +b.stats.streak || 0)), workouts30: Math.max(0, Math.min(100, +b.stats.workouts30 || 0)),
       goal: String(b.stats.goal || '').slice(0, 20) }) : me.stats;
-    q('UPDATE users SET name = ?, bio = ?, avatar = ?, stats = ? WHERE id = ?').run(name || me.name, bio, avatar, stats, me.id);
+    let username = me.username;
+    if (b.username != null && String(b.username).trim().toLowerCase() !== me.username.toLowerCase()) {
+      username = String(b.username).trim();
+      if (!USERNAME.test(username)) throw fail(400, 'Логин: 3–20 символов, латиница, цифры, точка или _');
+      if (q('SELECT 1 FROM users WHERE username = ? AND id != ?').get(username, me.id)) throw fail(409, 'Такой логин уже занят');
+    }
+    q('UPDATE users SET username = ?, name = ?, bio = ?, avatar = ?, stats = ? WHERE id = ?').run(username, name || me.name, bio, avatar, stats, me.id);
     return send(res, 200, { me: pub(q('SELECT * FROM users WHERE id = ?').get(me.id)) });
   }
   if (p === '/api/me/health-token' && M === 'POST') {
@@ -305,7 +342,7 @@ async function api(req, res, url) {
     const rows = q(`SELECT u.*, f.status FROM friends f JOIN users u ON u.id = CASE WHEN f.a = ? THEN f.b ELSE f.a END WHERE f.a = ? OR f.b = ?`).all(me.id, me.id, me.id);
     const friends = [], incoming = [], sent = [];
     for (const r of rows) {
-      if (r.status === 'accepted') friends.push(pub(r));
+      if (r.status === 'accepted') friends.push(withFlame(me.id, r));
       else (Number(r.status.split(':')[1]) === me.id ? sent : incoming).push(pub(r));
     }
     return send(res, 200, { friends, incoming, sent });
@@ -322,13 +359,23 @@ async function api(req, res, url) {
     }
     if (M === 'DELETE') { q('DELETE FROM friends WHERE a = ? AND b = ?').run(a, b); return send(res, 200, { state: 'none' }); }
   }
+  const rm = /^\/api\/friends\/(\d+)\/restore$/.exec(p);
+  if (rm && M === 'POST') {
+    const other = Number(rm[1]);
+    if (!areFriends(me.id, other)) throw fail(403, 'Только для друзей');
+    const f = flame(me.id, other);
+    if (f.state !== 'out') throw fail(400, 'Огонёк не погас');
+    if (!f.canRestore) throw fail(409, 'Огонёк уже восстанавливали — второй раз нельзя');
+    q('INSERT INTO flame_restores (a, b, day, created) VALUES (?, ?, ?, ?)').run(Math.min(me.id, other), Math.max(me.id, other), f.restoreDay, now());
+    return send(res, 200, { flame: flame(me.id, other) });
+  }
 
   if (p === '/api/chats' && M === 'GET') {
     const rows = q(`SELECT m.*, CASE WHEN m.sender = ? THEN m.recipient ELSE m.sender END AS peer FROM messages m
       JOIN (SELECT CASE WHEN sender = ? THEN recipient ELSE sender END AS peer, MAX(id) AS mid FROM messages WHERE sender = ? OR recipient = ? GROUP BY peer) t ON t.mid = m.id
       ORDER BY m.id DESC LIMIT 100`).all(me.id, me.id, me.id, me.id);
     const unread = Object.fromEntries(q('SELECT sender, COUNT(*) n FROM messages WHERE recipient = ? AND read_at IS NULL GROUP BY sender').all(me.id).map(r => [r.sender, r.n]));
-    const chats = rows.map(m => ({ peer: pub(q('SELECT * FROM users WHERE id = ?').get(m.peer)), last: shapeMsg(m), unread: unread[m.peer] || 0 })).filter(c => c.peer);
+    const chats = rows.map(m => ({ peer: withFlame(me.id, q('SELECT * FROM users WHERE id = ?').get(m.peer)), last: shapeMsg(m), unread: unread[m.peer] || 0 })).filter(c => c.peer);
     return send(res, 200, { chats, unreadTotal: Object.values(unread).reduce((a, b) => a + b, 0) });
   }
   const cm = /^\/api\/chats\/(\d+)$/.exec(p);
@@ -340,7 +387,7 @@ async function api(req, res, url) {
         .all(me.id, other, other, me.id, after).reverse();
       q('UPDATE messages SET read_at = ? WHERE sender = ? AND recipient = ? AND read_at IS NULL').run(now(), other, me.id);
       const peerRead = q('SELECT MAX(id) id FROM messages WHERE sender = ? AND recipient = ? AND read_at IS NOT NULL').get(me.id, other)?.id || 0;
-      return send(res, 200, { messages: rows.map(shapeMsg), peer: pub(q('SELECT * FROM users WHERE id = ?').get(other)), peerRead, friends: areFriends(me.id, other) });
+      return send(res, 200, { messages: rows.map(shapeMsg), peer: withFlame(me.id, q('SELECT * FROM users WHERE id = ?').get(other)), peerRead, friends: areFriends(me.id, other) });
     }
     if (M === 'POST') {
       if (!areFriends(me.id, other)) throw fail(403, 'Писать можно только друзьям');

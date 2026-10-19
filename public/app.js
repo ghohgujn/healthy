@@ -477,7 +477,7 @@
   }
   $('#openSettings').onclick = () => openSettings();
   $('#editGoal').onclick = () => showTab('profile');
-  $('#setupBanner').onclick = () => showTab('profile');
+  $('#setupBanner').onclick = () => window.HFOnboarding ? window.HFOnboarding.open() : showTab('profile');
   for (const [id, k] of Object.entries(numFields)) {
     $('#' + id).addEventListener('change', e => {
       const el = e.target, v = Math.round(parseFloat(el.value));

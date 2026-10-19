@@ -30,7 +30,7 @@ echo "==> Ключ ProxyAPI"
 if ! grep -q '^PROXYAPI_KEY=sk-' "$ENVF" 2>/dev/null; then
   read -r -s -p "Вставьте ключ ProxyAPI (sk-...) и нажмите Enter: " KEY </dev/tty; echo
   case "$KEY" in sk-*) ;; *) echo "Ключ должен начинаться с sk-"; exit 1;; esac
-  umask 077; printf 'PROXYAPI_KEY=%s\nPORT=3000\nRATE_LIMIT=30\n' "$KEY" > "$ENVF"
+  umask 077; printf 'PROXYAPI_KEY=%s\nPORT=3000\nRATE_LIMIT=30\nAPP_TZ=%s\n' "$KEY" "${APP_TZ:-Asia/Vladivostok}" > "$ENVF"
 fi
 chmod 600 "$ENVF"
 

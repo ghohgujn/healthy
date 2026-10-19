@@ -161,7 +161,7 @@
       </div>
 
       <div class="card prof-card">
-        <h2 class="h2">О себе</h2>
+        <h2 class="h2 about-title" id="aboutTitle">О себе</h2>
         <div class="seg" role="radiogroup" aria-label="Пол"><button data-sex="m">Мужчина</button><button data-sex="f">Женщина</button></div>
         <div class="grid3">
           <label class="field"><span class="field-label">Возраст</span><input class="input" type="number" inputmode="numeric" id="pAge" min="14" max="99"></label>
@@ -300,12 +300,6 @@
         <button class="icon-btn" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button>
       </div>
       <div class="sheet-body">
-        <fieldset class="group">
-          <legend class="field-label">Нейросеть</legend>
-          <label class="radio"><input type="radio" name="model" value="fast"><span><b>Быстрая</b> · GPT-6 Luna<small>Оптимум цены и точности</small></span></label>
-          <label class="radio"><input type="radio" name="model" value="precise"><span><b>Точная</b> · Claude Sonnet 5.5<small>Медленнее, аккуратнее с составом</small></span></label>
-          <label class="radio"><input type="radio" name="model" value="gemini"><span><b>Gemini</b> · 3.5 Flash<small>Сильна в оценке граммов</small></span></label>
-        </fieldset>
 
         <div class="grid2">
           <label class="field"><span class="field-label">Калорий в день</span><input class="input" type="number" inputmode="numeric" id="goalKcal" min="800" max="6000" step="50"></label>
@@ -336,26 +330,18 @@
       <span class="avatar chat-ava" id="chatAva"></span>
       <div class="chat-who"><p class="chat-name" id="chatName"></p><p class="chat-sub" id="chatSub"></p></div>
     </header>
-    <div class="chat-scroll" id="chatScroll"><ul class="msgs" id="msgs"></ul></div>
+    <div class="chat-scroll" id="chatScroll">
+      <div class="flame-banner" id="flameBanner" hidden></div>
+      <ul class="msgs" id="msgs"></ul>
+    </div>
+    <div class="circle-rec" id="circleRec" hidden aria-hidden="true">
+      <div class="circle-view"><video id="circleVideo" playsinline muted autoplay></video><svg class="circle-prog" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" id="circleProg"/></svg></div>
+    </div>
     <div class="composer" id="composer">
-      <button class="cmp-btn" id="recCircle" aria-label="Записать кружок"><svg><use href="#i-circle"/></svg></button>
+      <button class="cmp-btn" id="recTrash" aria-label="Отменить запись" hidden><svg><use href="#i-trash"/></svg></button>
       <input class="cmp-input" id="msgInput" placeholder="Сообщение" maxlength="2000" autocomplete="off" enterkeyhint="send" aria-label="Сообщение">
+      <div class="rec-status" id="recStatus" hidden role="status"><span class="rec-dot" aria-hidden="true"></span><span class="rec-time" id="recTime">0:00</span><span class="rec-hint" id="recHint">‹ влево — отмена</span><span class="rec-lock" aria-hidden="true"><svg><use href="#i-chev"/></svg></span></div>
       <button class="cmp-btn cmp-main" id="sendBtn" aria-label="Записать голосовое"><svg><use href="#i-mic"/></svg></button>
-    </div>
-    <div class="rec-bar" id="recBar" hidden>
-      <button class="cmp-btn" id="recCancel" aria-label="Отменить запись"><svg><use href="#i-trash"/></svg></button>
-      <span class="rec-dot" aria-hidden="true"></span><span class="rec-time" id="recTime">0:00</span>
-      <span class="rec-hint" id="recHint">Запись голосового…</span>
-      <button class="cmp-btn cmp-main" id="recSend" aria-label="Отправить"><svg><use href="#i-send"/></svg></button>
-    </div>
-    <div class="circle-rec" id="circleRec" hidden>
-      <div class="circle-view"><video id="circleVideo" playsinline muted autoplay></video><svg class="circle-prog" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="48" id="circleProg"/></svg></div>
-      <p class="circle-time" id="circleTime">Нажмите, чтобы записать · до 60 с</p>
-      <div class="circle-btns">
-        <button class="cmp-btn light" id="circleCancel" aria-label="Отменить"><svg><use href="#i-x"/></svg></button>
-        <button class="shutter rec" id="circleShot" aria-label="Начать запись"><span></span></button>
-        <button class="cmp-btn light" id="circleSend" aria-label="Отправить кружок" disabled><svg><use href="#i-send"/></svg></button>
-      </div>
     </div>
   </div>
 
@@ -408,9 +394,39 @@
     </section>
   </div>
 
+  <!-- Developer panel (5 taps on «О себе») -->
+  <div class="sheet-wrap" id="devSheet" hidden>
+    <div class="scrim" data-close></div>
+    <section class="sheet sheet-settings" role="dialog" aria-modal="true" aria-labelledby="devTitle">
+      <div class="sheet-head"><h2 class="h2" id="devTitle">Для разработчика</h2><button class="icon-btn" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button></div>
+      <div class="sheet-body">
+        <fieldset class="group">
+          <legend class="field-label">Нейросеть для распознавания</legend>
+          <label class="radio"><input type="radio" name="model" value="fast"><span><b>Быстрая</b> · GPT-6 Luna<small>Оптимум цены и точности</small></span></label>
+          <label class="radio"><input type="radio" name="model" value="precise"><span><b>Точная</b> · Claude Sonnet 5.5<small>Медленнее, аккуратнее с составом</small></span></label>
+          <label class="radio"><input type="radio" name="model" value="gemini"><span><b>Gemini</b> · 3.5 Flash<small>Сильна в оценке граммов</small></span></label>
+        </fieldset>
+        <div class="group dev-info" id="devInfo"></div>
+        <div class="row-btns"><button class="btn btn-ghost btn-sm" id="devOnboard">Показать онбординг</button><button class="btn btn-ghost btn-sm" id="devHealth">Проверить сервер</button></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Onboarding -->
+  <div class="onb" id="onb" role="dialog" aria-modal="true" aria-labelledby="onbTitle" hidden>
+    <div class="onb-top">
+      <button class="icon-btn" id="onbBack" aria-label="Назад"><svg><use href="#i-back"/></svg></button>
+      <div class="onb-progress" aria-hidden="true"><i id="onbBar"></i></div>
+      <button class="onb-skip" id="onbSkip">Пропустить</button>
+    </div>
+    <div class="onb-body" id="onbBody"></div>
+    <div class="onb-foot"><p class="form-err" id="onbErr" role="alert"></p><button class="btn btn-primary onb-next" id="onbNext">Далее</button></div>
+  </div>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="calc.js"></script>
   <script src="app.js"></script>
   <script src="social.js"></script>
+  <script src="onboarding.js"></script>
 </body>
 </html>
