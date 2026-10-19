@@ -32,13 +32,15 @@
     const profile = { ...PROFILE0, ...pr, name: String(pr.name || '').slice(0, 30),
       avatar: typeof pr.avatar === 'string' && pr.avatar.startsWith('data:image/') ? pr.avatar : '' };
     const weights = (Array.isArray(d.weights) ? d.weights : []).filter(w => w && /^\d{4}-\d{2}-\d{2}$/.test(w.date) && +w.kg > 20 && +w.kg < 400).map(w => ({ date: w.date, kg: +w.kg }));
-    return { settings: { ...DEFAULTS, ...(d.settings && typeof d.settings === 'object' ? d.settings : {}) }, days, profile, weights };
+    const health = {};
+    if (d.health && typeof d.health === 'object') for (const [k, v] of Object.entries(d.health)) if (/^\d{4}-\d{2}-\d{2}$/.test(k) && v) health[k] = { steps: +v.steps || 0, active_kcal: +v.active_kcal || 0 };
+    return { settings: { ...DEFAULTS, ...(d.settings && typeof d.settings === 'object' ? d.settings : {}) }, days, profile, weights, health };
   }
   try { const raw = localStorage.getItem(KEY); if (raw) db = validDb(JSON.parse(raw)) || db; } catch { /* in-memory */ }
 
   function save() {
     const write = () => localStorage.setItem(KEY, JSON.stringify(db));
-    try { write(); return true; } catch {
+    try { write(); window.HFSocial?.onSave(); return true; } catch {
       // free space: drop thumbnails older than 14 days, then retry once
       const cutoff = Date.now() - 14 * 864e5;
       for (const d of Object.values(db.days)) for (const m of d.meals) if (m.time < cutoff) m.thumb = '';
@@ -53,8 +55,10 @@
   const keyOf = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const today = () => keyOf(new Date());
   const day = k => { const d = (db.days[k] ||= { meals: [], water: 0 }); d.acts ||= []; d.steps ||= 0; return d; };
-  const actKcal = k => { const d = day(k), w = db.profile.weight || 75;
-    return d.acts.reduce((a, x) => a + HFCalc.activityKcal(x.type, x.level, x.min, w), 0) + HFCalc.stepsKcal(d.steps, w); };
+  const actKcal = k => { const d = day(k), w = db.profile.weight || 75, h = (db.health || {})[k] || {};
+    const manual = d.acts.reduce((a, x) => a + HFCalc.activityKcal(x.type, x.level, x.min, w), 0) + HFCalc.stepsKcal(d.steps || h.steps || 0, w);
+    // активные калории из «Здоровья» уже включают тренировки с часов — берём большее, чтобы не считать дважды
+    return Math.max(manual, Math.round(h.active_kcal || 0)); };
   const r0 = n => Math.round(n);
   const API = (CFG.apiBase || '').replace(/\/$/, '') + '/api/analyze';
   let selected = today();
@@ -176,7 +180,7 @@
   const stack = [];
   function setInert() {
     const top = stack[stack.length - 1]?.el;
-    for (const el of [document.querySelector('.app'), ...document.querySelectorAll('.sheet-wrap, .cam')]) el.inert = !!top && el !== top;
+    for (const el of [document.querySelector('.app'), ...document.querySelectorAll('.sheet-wrap, .cam, .chat')]) el.inert = !!top && el !== top;
   }
   function openDialog(el, focusSel) {
     stack.push({ el, back: document.activeElement });
@@ -516,7 +520,8 @@
   let tab = 'today';
   function showTab(name) {
     tab = name;
-    for (const t of ['today', 'activity', 'profile']) $('#tab-' + t).hidden = t !== name;
+    for (const t of ['today', 'activity', 'chats', 'profile']) $('#tab-' + t).hidden = t !== name;
+    window.HFSocial?.onTab(name);
     document.querySelectorAll('.tabbtn').forEach(b => { if (b.dataset.tab === name) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
     window.scrollTo(0, 0);
     render();
@@ -601,8 +606,10 @@
       b.onclick = () => openAct(a);
       li.appendChild(b); list.appendChild(li);
     });
-    const st = $('#stepsInput'); if (document.activeElement !== st) st.value = dayObj.steps || '';
-    $('#stepsKcal').textContent = dayObj.steps ? `≈${HFCalc.stepsKcal(dayObj.steps, db.profile.weight || 75)} ккал` : 'не учтены';
+    const hd = (db.health || {})[actDay] || {};
+    const st = $('#stepsInput'); if (document.activeElement !== st) { st.value = dayObj.steps || ''; st.placeholder = hd.steps ? String(hd.steps) : '0'; }
+    const stepsUsed = dayObj.steps || hd.steps || 0;
+    $('#stepsKcal').textContent = (stepsUsed ? `≈${HFCalc.stepsKcal(stepsUsed, db.profile.weight || 75)} ккал` : 'не учтены') + (hd.active_kcal ? ` · «Здоровье»: ${Math.round(hd.active_kcal)} ккал активности` : hd.steps && !dayObj.steps ? ' · из «Здоровья»' : '');
   }
   $('#calPrev').onclick = () => { calMonth.setMonth(calMonth.getMonth() - 1); renderActivity(); };
   $('#calNext').onclick = () => { const n = new Date(calMonth); n.setMonth(n.getMonth() + 1); if (n <= new Date()) { calMonth = n; renderActivity(); } };
@@ -808,6 +815,9 @@
     box.innerHTML = rows.map(r => `<div class="bar" title="${Math.round(r.eaten)} из ${r.goal} ккал"><div class="bar-col"><i class="${r.eaten > r.goal * 1.05 ? 'over' : ''}" style="height:${r.eaten / max * 100}%"></i><b style="bottom:${r.goal / max * 100}%"></b></div><span>${r.wd}</span></div>`).join('');
     box.setAttribute('aria-label', 'Калории за неделю: ' + rows.map(r => `${r.wd} ${Math.round(r.eaten)}`).join(', '));
   }
+
+  $('#shareMeal').onclick = () => window.HFSocial?.shareMeal({ name: $('#mealName').textContent, thumb: draft.thumb, items: draft.items.map(i => ({ ...i })), totals: mealTotals(draft.items) });
+  window.HF = { get db() { return db; }, set db(v) { db = v; }, validDb, save, day, mealTotals, openDialog, closeDialog, toast, render, streakInfo, keyOf, today, showTab, loadImage, paintAvatar, actKcal };
 
   /* ---------- day rollover ---------- */
   function rollDay() {

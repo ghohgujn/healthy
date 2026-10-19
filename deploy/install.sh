@@ -14,7 +14,11 @@ export DEBIAN_FRONTEND=noninteractive
 
 echo "==> Пакеты"
 apt-get update -qq
-apt-get install -y -qq git curl nodejs caddy ufw >/dev/null
+apt-get install -y -qq git curl ca-certificates caddy ufw >/dev/null
+if ! node -v 2>/dev/null | grep -qE '^v(2[2-9]|[3-9][0-9])'; then
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
+  apt-get install -y -qq nodejs >/dev/null
+fi
 node -v
 
 echo "==> Код"
@@ -39,12 +43,15 @@ After=network-online.target
 User=healthy
 WorkingDirectory=$APP
 EnvironmentFile=$ENVF
-ExecStart=/usr/bin/node $APP/server/server.js
+Environment=DATA_DIR=/var/lib/healthy
+StateDirectory=healthy
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning $APP/server/server.js
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadOnlyPaths=$APP
+ReadWritePaths=/var/lib/healthy
 [Install]
 WantedBy=multi-user.target
 UNIT
@@ -58,7 +65,7 @@ HOST="${HOST:-${IP//./-}.sslip.io}"
 cat > /etc/caddy/Caddyfile <<CADDY
 $HOST {
   encode gzip
-  request_body { max_size 5MB }
+  request_body { max_size 30MB }
   reverse_proxy 127.0.0.1:3000
 }
 CADDY
@@ -66,6 +73,11 @@ systemctl enable --now caddy
 systemctl reload caddy || systemctl restart caddy
 
 ufw allow OpenSSH >/dev/null; ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null; ufw --force enable >/dev/null
+
+echo "==> Бэкап базы каждую ночь (7 последних копий)"
+cat > /etc/cron.d/healthy-backup <<'BK'
+30 3 * * * root mkdir -p /var/backups/healthy && tar czf /var/backups/healthy/data-$(date +\%u).tgz -C /var/lib healthy
+BK
 
 echo "==> Автообновление из GitHub каждые 2 минуты"
 cat > /usr/local/bin/healthy-update <<'UPD'

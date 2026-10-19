@@ -36,6 +36,17 @@
     <symbol id="i-user" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8.5" r="4"/><path d="M4.5 20c1.2-3.8 4-5.5 7.5-5.5s6.3 1.7 7.5 5.5" stroke-linecap="round"/></g></symbol>
     <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3L6 13.5h5L10 21l8-11h-5z" fill="currentColor"/></symbol>
     <symbol id="i-chev" viewBox="0 0 24 24"><path d="M10 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M13 5l7 6.5-7 6.5v-4C8 14 5.5 15.5 4 19c.5-5.5 3.5-9 9-10z" fill="currentColor"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M5 18.5V7a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H8.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/></g></symbol>
+    <symbol id="i-circle" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.2" fill="currentColor"/></g></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-2.5-6.5z" fill="currentColor"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></g></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.4 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z" fill="currentColor"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   </svg>
 
@@ -121,6 +132,21 @@
       </div>
     </section>
 
+    <section class="tab" id="tab-chats" hidden aria-labelledby="chatsTitle">
+      <div class="tab-head"><h1 class="h1" id="chatsTitle">Друзья</h1></div>
+      <div id="authBox"></div>
+      <div id="socialBox" hidden>
+        <label class="search"><svg><use href="#i-search"/></svg><input class="input" id="userSearch" type="search" placeholder="Найти по логину или имени" autocomplete="off" enterkeyhint="search"></label>
+        <div id="searchResults" hidden></div>
+        <div id="socialMain">
+          <div class="friend-row" id="friendRow" aria-label="Друзья"></div>
+          <div id="requests"></div>
+          <h2 class="h2 list-title">Сообщения</h2>
+          <ul class="chat-list" id="chatList"></ul>
+        </div>
+      </div>
+    </section>
+
     <section class="tab" id="tab-profile" hidden aria-labelledby="profTitle">
       <div class="prof-hero">
         <label class="avatar-big" for="avatarInput"><span class="avatar" id="avatarBig"></span><span class="avatar-edit">Фото</span></label>
@@ -160,6 +186,9 @@
         <div class="bars" id="weekBars"></div>
       </div>
 
+      <div class="card prof-card" id="accountCard"></div>
+      <div class="card prof-card" id="healthCard"></div>
+
       <button class="btn btn-ghost settings-btn" id="openSettings"><svg><use href="#i-sliders"/></svg>Настройки и данные</button>
     </section>
 
@@ -167,6 +196,7 @@
       <button class="tabbtn" data-tab="today" aria-current="page"><svg><use href="#i-home"/></svg><span>Сегодня</span></button>
       <button class="tabbtn" data-tab="activity"><svg><use href="#i-cal"/></svg><span>Активность</span></button>
       <span class="tab-gap" aria-hidden="true"></span>
+      <button class="tabbtn" data-tab="chats"><svg><use href="#i-chat"/></svg><span>Друзья</span><i class="badge" id="chatBadge" hidden></i></button>
       <button class="tabbtn" data-tab="profile"><svg><use href="#i-user"/></svg><span>Профиль</span></button>
     </nav>
 
@@ -255,6 +285,7 @@
       </div>
       <footer class="sheet-foot" id="mealFoot" hidden>
         <button class="btn btn-icon btn-ghost" id="deleteMeal" aria-label="Удалить приём пищи" hidden><svg><use href="#i-trash"/></svg></button>
+        <button class="btn btn-icon btn-ghost" id="shareMeal" aria-label="Поделиться с друзьями"><svg><use href="#i-share"/></svg></button>
         <button class="btn btn-primary" id="saveMeal">Добавить в дневник</button>
       </footer>
     </section>
@@ -298,6 +329,59 @@
     </section>
   </div>
 
+  <!-- Chat -->
+  <div class="chat" id="chat" role="dialog" aria-modal="true" aria-labelledby="chatName" hidden>
+    <header class="chat-top">
+      <button class="icon-btn" id="chatBack" aria-label="Назад"><svg><use href="#i-back"/></svg></button>
+      <span class="avatar chat-ava" id="chatAva"></span>
+      <div class="chat-who"><p class="chat-name" id="chatName"></p><p class="chat-sub" id="chatSub"></p></div>
+    </header>
+    <div class="chat-scroll" id="chatScroll"><ul class="msgs" id="msgs"></ul></div>
+    <div class="composer" id="composer">
+      <button class="cmp-btn" id="recCircle" aria-label="Записать кружок"><svg><use href="#i-circle"/></svg></button>
+      <input class="cmp-input" id="msgInput" placeholder="Сообщение" maxlength="2000" autocomplete="off" enterkeyhint="send" aria-label="Сообщение">
+      <button class="cmp-btn cmp-main" id="sendBtn" aria-label="Записать голосовое"><svg><use href="#i-mic"/></svg></button>
+    </div>
+    <div class="rec-bar" id="recBar" hidden>
+      <button class="cmp-btn" id="recCancel" aria-label="Отменить запись"><svg><use href="#i-trash"/></svg></button>
+      <span class="rec-dot" aria-hidden="true"></span><span class="rec-time" id="recTime">0:00</span>
+      <span class="rec-hint" id="recHint">Запись голосового…</span>
+      <button class="cmp-btn cmp-main" id="recSend" aria-label="Отправить"><svg><use href="#i-send"/></svg></button>
+    </div>
+    <div class="circle-rec" id="circleRec" hidden>
+      <div class="circle-view"><video id="circleVideo" playsinline muted autoplay></video><svg class="circle-prog" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="48" id="circleProg"/></svg></div>
+      <p class="circle-time" id="circleTime">Нажмите, чтобы записать · до 60 с</p>
+      <div class="circle-btns">
+        <button class="cmp-btn light" id="circleCancel" aria-label="Отменить"><svg><use href="#i-x"/></svg></button>
+        <button class="shutter rec" id="circleShot" aria-label="Начать запись"><span></span></button>
+        <button class="cmp-btn light" id="circleSend" aria-label="Отправить кружок" disabled><svg><use href="#i-send"/></svg></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Share sheet -->
+  <div class="sheet-wrap" id="shareSheet" hidden>
+    <div class="scrim" data-close></div>
+    <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+      <div class="sheet-head"><h2 class="h2" id="shareTitle">Отправить другу</h2><button class="icon-btn" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button></div>
+      <div class="sheet-body">
+        <div class="share-card" id="sharePreview"></div>
+        <div class="share-row" id="shareFriends" role="group" aria-label="Друзья"></div>
+        <input class="input" id="shareText" maxlength="300" placeholder="Добавить сообщение" autocomplete="off">
+      </div>
+      <footer class="sheet-foot"><button class="btn btn-primary" id="shareSend" disabled>Отправить</button></footer>
+    </section>
+  </div>
+
+  <!-- Health guide -->
+  <div class="sheet-wrap" id="healthSheet" hidden>
+    <div class="scrim" data-close></div>
+    <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="healthTitle">
+      <div class="sheet-head"><h2 class="h2" id="healthTitle">Шаги и калории из «Здоровья»</h2><button class="icon-btn" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button></div>
+      <div class="sheet-body health-guide" id="healthGuide"></div>
+    </section>
+  </div>
+
   <!-- Activity sheet -->
   <div class="sheet-wrap" id="actSheet" hidden>
     <div class="scrim" data-close></div>
@@ -327,5 +411,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="calc.js"></script>
   <script src="app.js"></script>
+  <script src="social.js"></script>
 </body>
 </html>
