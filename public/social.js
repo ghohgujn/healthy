@@ -8,8 +8,51 @@
 
   let me = null, friends = [], incoming = [], sent = [], chats = [], tab = 'today';
 
+  // Демо-режим (превью без сервера): локальная заглушка API с подписанными демо-друзьями
+  const mock = DEMO && (() => {
+    const t = Date.now(), users = [
+      { id: 2, username: 'masha.demo', name: 'Маша (демо)', avatar: '', bio: '', stats: { streak: 12 } },
+      { id: 3, username: 'artem.demo', name: 'Артём (демо)', avatar: '', bio: '', stats: { streak: 4 } },
+      { id: 4, username: 'katya.demo', name: 'Катя (демо)', avatar: '', bio: '', stats: {} } ];
+    const st = { me: { id: 1, username: 'you', name: 'Вы', avatar: '', bio: '', stats: {}, healthToken: 'demo-token' }, fr: { 2: 'friends', 3: 'friends', 4: 'incoming' }, id: 10,
+      msgs: [ { id: 1, from: 2, to: 1, kind: 'text', body: 'Привет! Как питание сегодня?', created: t - 36e5 },
+        { id: 2, from: 2, to: 1, kind: 'meal', body: 'мой обед', media: '', meta: { title: 'Плов с салатом', kcal: 640, p: 28, f: 24, c: 76 }, created: t - 30e5 },
+        { id: 3, from: 3, to: 1, kind: 'text', body: 'Завтра на площадку в 8?', created: t - 9e5 } ], media: {} };
+    const pubU = u => ({ ...u, state: st.fr[u.id] || 'none' });
+    return async (path, o) => {
+      await new Promise(r => setTimeout(r, 120));
+      const u = new URL(path, location.href), p = u.pathname, M = o.method || 'GET', body = typeof o.body === 'string' ? JSON.parse(o.body || '{}') : o.body;
+      if (p === '/api/me') return { me: st.me };
+      if (p === '/api/users') { const q = (u.searchParams.get('q') || '').toLowerCase(); return { users: users.filter(x => (x.username + x.name).toLowerCase().includes(q)).map(pubU) }; }
+      if (p === '/api/friends') return { friends: users.filter(x => st.fr[x.id] === 'friends'), incoming: users.filter(x => st.fr[x.id] === 'incoming'), sent: users.filter(x => st.fr[x.id] === 'sent') };
+      const fm = /^\/api\/friends\/(\d+)$/.exec(p);
+      if (fm) { const id = +fm[1]; st.fr[id] = M === 'DELETE' ? 'none' : st.fr[id] === 'incoming' ? 'friends' : st.fr[id] === 'friends' ? 'friends' : 'friends'; return { state: st.fr[id] }; }
+      if (p === '/api/media') { const id = 'demo' + (++st.id); st.media[id] = URL.createObjectURL(o.body); return { id, url: st.media[id] }; }
+      if (p === '/api/chats') {
+        const peers = [...new Set(st.msgs.map(m => m.from === 1 ? m.to : m.from))];
+        const chats = peers.map(pid => { const ms = st.msgs.filter(m => m.from === pid || m.to === pid); return { peer: users.find(x => x.id === pid), last: ms[ms.length - 1], unread: ms.filter(m => m.from === pid && !m.read).length }; })
+          .sort((a, b) => b.last.created - a.last.created);
+        return { chats, unreadTotal: chats.reduce((a, c) => a + c.unread, 0) };
+      }
+      const cm = /^\/api\/chats\/(\d+)$/.exec(p);
+      if (cm) {
+        const pid = +cm[1];
+        if (M === 'GET') { const after = +u.searchParams.get('after') || 0; const ms = st.msgs.filter(m => (m.from === pid || m.to === pid) && m.id > after); ms.forEach(m => { if (m.from === pid) m.read = true; });
+          return { messages: ms, peer: users.find(x => x.id === pid), peerRead: 0, friends: st.fr[pid] === 'friends' }; }
+        const m = { id: ++st.id, from: 1, to: pid, kind: body.kind, body: body.body || '', media: body.media ? st.media[body.media] : '', meta: body.meta || null, created: Date.now() };
+        st.msgs.push(m); return { message: m };
+      }
+      if (/^\/api\/messages\//.test(p)) { const id = +p.split('/').pop(); st.msgs = st.msgs.filter(m => m.id !== id); return { ok: true }; }
+      if (p === '/api/health') return { days: [] };
+      if (p === '/api/sync') return M === 'GET' ? { data: null } : { ok: true };
+      if (p === '/api/auth/logout') return { ok: true };
+      throw new Error('Недоступно в демо');
+    };
+  })();
+
   async function api(path, opts = {}) {
-    const o = { method: opts.method || 'GET', headers: {}, credentials: 'same-origin' };
+    if (mock) return mock(path, opts);
+    const o ={ method: opts.method || 'GET', headers: {}, credentials: 'same-origin' };
     if (opts.body instanceof Blob) { o.body = opts.body; o.headers['Content-Type'] = opts.body.type; }
     else if (opts.body !== undefined) { o.body = typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body); o.headers['Content-Type'] = 'application/json'; }
     const r = await fetch(path, o);
@@ -33,7 +76,7 @@
 
   /* ================= account ================= */
   async function boot() {
-    if (DEMO) { renderAuth(); renderAccountCard(); renderHealthCard(); return; }
+    if (DEMO) { me = (await api('/api/me')).me; renderAuth(); renderAccountCard(); renderHealthCard(); refreshSocial(); return; }
     try { me = (await api('/api/me')).me; } catch { me = null; }
     renderAuth(); renderAccountCard(); renderHealthCard();
     if (me) { refreshSocial(); pullHealth(); restoreIfEmpty(); }
