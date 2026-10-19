@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Healthy Fit — КБЖУ по фото</title>
+  <meta name="description" content="Сфотографируйте еду — получите граммы и КБЖУ за пару секунд. Дневник питания и вода.">
+  <meta name="theme-color" content="#fbfbf9" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16181c" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%2316181c'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='%23fff' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Healthy Fit">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="app.css">
+  <script src="config.js"></script>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></g></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></g></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5"/></g></symbol>
+    <symbol id="i-flash" viewBox="0 0 24 24"><path d="M13 2L5 14h6l-1 8 8-12h-6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 3c.5 3.5 4.5 5.5 4.5 10a4.5 4.5 0 0 1-9 0c0-2.2 1.2-3.6 2.2-4.6.2 1.6.9 2.6 1.8 3.1C11.7 9.4 11 6.2 12 3z" fill="currentColor"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-6.5 8 6.5V20h-5v-5H9v5H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-cal" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="5.5" width="16" height="14.5" rx="3"/><path d="M8 3.5v4M16 3.5v4M4 10.5h16"/></g></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8.5" r="4"/><path d="M4.5 20c1.2-3.8 4-5.5 7.5-5.5s6.3 1.7 7.5 5.5" stroke-linecap="round"/></g></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3L6 13.5h5L10 21l8-11h-5z" fill="currentColor"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="M10 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </svg>
+
+  <div class="app">
+    <header class="top">
+      <div class="brand"><span class="brand-dot" aria-hidden="true"></span>Healthy Fit</div>
+      <div class="top-right">
+        <button class="streak-chip" id="streakChip" aria-label="Серия дней"><svg><use href="#i-flame"/></svg><b id="streakNum">0</b></button>
+        <button class="avatar-btn" id="avatarBtn" aria-label="Профиль"><span class="avatar" id="avatarTop"></span></button>
+      </div>
+    </header>
+
+    <main class="tab" id="tab-today">
+    <nav class="week" id="week" aria-label="Выбор дня"></nav>
+
+      <button class="setup-banner" id="setupBanner" hidden><span><b>Рассчитаем вашу норму</b><small>Цель, рост, вес — 30 секунд</small></span><svg><use href="#i-chev"/></svg></button>
+
+      <section class="card cal-card" aria-labelledby="calTitle">
+        <div class="cal-text">
+          <p class="num" id="calLeft">0</p>
+          <h2 id="calTitle" class="cal-label">ккал осталось</h2>
+          <p class="sub" id="calEaten">съедено 0 из 0</p>
+          <p class="sub act-line" id="actLine" hidden></p>
+          <button class="link-btn" id="editGoal">Изменить цель</button>
+        </div>
+        <svg class="ring ring-lg" viewBox="0 0 120 120" aria-hidden="true">
+          <circle class="ring-bg" cx="60" cy="60" r="50"/>
+          <circle class="ring-fg" id="calRing" cx="60" cy="60" r="50" style="--c: var(--color-ink)"/>
+        </svg>
+      </section>
+
+      <section class="macros" aria-label="Белки, жиры, углеводы">
+        <div class="card macro" data-m="p"><svg class="ring ring-sm" viewBox="0 0 120 120" aria-hidden="true"><circle class="ring-bg" cx="60" cy="60" r="48"/><circle class="ring-fg" cx="60" cy="60" r="48" style="--c: var(--color-protein)"/></svg><p class="macro-val"><b>0</b>/0 г</p><p class="macro-name">Белки</p></div>
+        <div class="card macro" data-m="f"><svg class="ring ring-sm" viewBox="0 0 120 120" aria-hidden="true"><circle class="ring-bg" cx="60" cy="60" r="48"/><circle class="ring-fg" cx="60" cy="60" r="48" style="--c: var(--color-fat)"/></svg><p class="macro-val"><b>0</b>/0 г</p><p class="macro-name">Жиры</p></div>
+        <div class="card macro" data-m="c"><svg class="ring ring-sm" viewBox="0 0 120 120" aria-hidden="true"><circle class="ring-bg" cx="60" cy="60" r="48"/><circle class="ring-fg" cx="60" cy="60" r="48" style="--c: var(--color-carb)"/></svg><p class="macro-val"><b>0</b>/0 г</p><p class="macro-name">Углеводы</p></div>
+      </section>
+
+      <section class="card water" aria-labelledby="waterTitle">
+        <div class="water-head">
+          <div>
+            <h2 id="waterTitle" class="h2">Вода</h2>
+            <p class="sub" id="waterText">0 из 2000 мл</p>
+          </div>
+          <div class="water-btns">
+            <button class="round-btn" id="waterMinus" aria-label="Убрать стакан"><svg><use href="#i-minus"/></svg></button>
+            <button class="round-btn round-btn-ink" id="waterPlus" aria-label="Добавить стакан"><svg><use href="#i-plus"/></svg></button>
+          </div>
+        </div>
+        <div class="glasses" id="glasses" role="group" aria-label="Стаканы воды"></div>
+        <div class="water-bar" aria-hidden="true"><span id="waterBarFill"></span></div>
+      </section>
+
+      <section class="meals" aria-labelledby="mealsTitle">
+        <h2 id="mealsTitle" class="h2 meals-title">Приёмы пищи</h2>
+        <ul class="meal-list" id="mealList"></ul>
+        <div class="empty" id="mealsEmpty">
+          <p class="empty-title">Пока пусто</p>
+          <p class="sub">Нажмите на камеру внизу и сфотографируйте тарелку — посчитаем граммы и КБЖУ.</p>
+        </div>
+      </section>
+    </main>
+
+    <section class="tab" id="tab-activity" hidden aria-labelledby="actTitle">
+      <div class="tab-head"><h1 class="h1" id="actTitle">Активность</h1></div>
+      <div class="card calendar">
+        <div class="cal-head">
+          <button class="icon-btn" id="calPrev" aria-label="Предыдущий месяц"><svg style="transform:scaleX(-1)"><use href="#i-chev"/></svg></button>
+          <p class="cal-month" id="calMonth"></p>
+          <button class="icon-btn" id="calNext" aria-label="Следующий месяц"><svg><use href="#i-chev"/></svg></button>
+        </div>
+        <div class="cal-grid cal-wd" aria-hidden="true"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div>
+        <div class="cal-grid" id="calGrid" role="grid"></div>
+        <div class="cal-stats" id="calStats"></div>
+      </div>
+      <div class="day-acts">
+        <div class="day-acts-head"><h2 class="h2" id="dayActTitle">Сегодня</h2><button class="btn btn-primary btn-sm" id="addActBtn"><svg><use href="#i-plus"/></svg>Тренировка</button></div>
+        <ul class="act-list" id="actList"></ul>
+        <div class="steps-row card">
+          <div><p class="h3">Шаги</p><p class="sub" id="stepsKcal">не учтены</p></div>
+          <input class="input steps-input" id="stepsInput" type="number" inputmode="numeric" min="0" max="100000" step="500" placeholder="0" aria-label="Шаги за день">
+        </div>
+        <p class="sub small">Калории активности — оценка по таблицам MET (±30%). Они прибавляются к дневной норме.</p>
+      </div>
+    </section>
+
+    <section class="tab" id="tab-profile" hidden aria-labelledby="profTitle">
+      <div class="prof-hero">
+        <label class="avatar-big" for="avatarInput"><span class="avatar" id="avatarBig"></span><span class="avatar-edit">Фото</span></label>
+        <input type="file" id="avatarInput" accept="image/*" class="sr-only">
+        <input class="name-input" id="nameInput" maxlength="30" placeholder="Ваше имя" aria-label="Имя" autocomplete="given-name">
+        <div class="streak-card" id="streakCard"></div>
+      </div>
+
+      <div class="card prof-card">
+        <h2 class="h2">Цель</h2>
+        <div class="goal-grid" id="goalGrid" role="radiogroup" aria-label="Цель"></div>
+      </div>
+
+      <div class="card prof-card">
+        <h2 class="h2">О себе</h2>
+        <div class="seg" role="radiogroup" aria-label="Пол"><button data-sex="m">Мужчина</button><button data-sex="f">Женщина</button></div>
+        <div class="grid3">
+          <label class="field"><span class="field-label">Возраст</span><input class="input" type="number" inputmode="numeric" id="pAge" min="14" max="99"></label>
+          <label class="field"><span class="field-label">Рост, см</span><input class="input" type="number" inputmode="numeric" id="pHeight" min="120" max="230"></label>
+          <label class="field"><span class="field-label">Вес, кг</span><input class="input" type="number" inputmode="decimal" id="pWeight" min="30" max="300" step="0.1"></label>
+          <label class="field"><span class="field-label">Цель, кг</span><input class="input" type="number" inputmode="decimal" id="pTarget" min="30" max="300" step="0.1"></label>
+          <label class="field"><span class="field-label">% жира</span><input class="input" type="number" inputmode="decimal" id="pFat" min="3" max="60" step="0.5" placeholder="—"></label>
+        </div>
+        <p class="field-label">Активность без учёта тренировок</p>
+        <div class="seg seg-wrap" id="actLevel" role="radiogroup" aria-label="Уровень активности"></div>
+      </div>
+
+      <div class="card prof-card plan" id="planCard"></div>
+
+      <div class="card prof-card">
+        <div class="row-between"><h2 class="h2">Вес</h2><div class="weigh"><input class="input" id="weighInput" type="number" inputmode="decimal" step="0.1" min="30" max="300" placeholder="кг" aria-label="Вес сегодня"><button class="btn btn-primary btn-sm" id="weighBtn">Записать</button></div></div>
+        <div class="wchart" id="wChart"></div>
+      </div>
+
+      <div class="card prof-card">
+        <h2 class="h2">Неделя</h2>
+        <div class="bars" id="weekBars"></div>
+      </div>
+
+      <button class="btn btn-ghost settings-btn" id="openSettings"><svg><use href="#i-sliders"/></svg>Настройки и данные</button>
+    </section>
+
+    <nav class="tabbar" aria-label="Разделы">
+      <button class="tabbtn" data-tab="today" aria-current="page"><svg><use href="#i-home"/></svg><span>Сегодня</span></button>
+      <button class="tabbtn" data-tab="activity"><svg><use href="#i-cal"/></svg><span>Активность</span></button>
+      <span class="tab-gap" aria-hidden="true"></span>
+      <button class="tabbtn" data-tab="profile"><svg><use href="#i-user"/></svg><span>Профиль</span></button>
+    </nav>
+
+    <button class="fab" id="openCamera" aria-label="Сфотографировать еду">
+      <svg><use href="#i-camera"/></svg>
+    </button>
+    <input type="file" id="photoInput" accept="image/*" class="sr-only" tabindex="-1" aria-hidden="true">
+    <input type="file" id="cameraInput" accept="image/*" capture="environment" class="sr-only" tabindex="-1" aria-hidden="true">
+  </div>
+
+
+  <!-- Camera -->
+  <div class="cam" id="cam" role="dialog" aria-modal="true" aria-label="Камера" hidden>
+    <video id="camVideo" playsinline muted autoplay></video>
+    <img id="camFrozen" alt="" hidden>
+    <div class="cam-frame" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <div class="cam-top">
+      <button class="cam-btn" id="camClose" aria-label="Закрыть камеру"><svg><use href="#i-x"/></svg></button>
+      <p class="cam-hint" id="camHint">Вся тарелка в кадре, снимайте сверху</p>
+      <button class="cam-btn" id="camTorch" aria-label="Вспышка" aria-pressed="false" hidden><svg><use href="#i-flash"/></svg></button>
+    </div>
+    <div class="cam-fallback" id="camFallback" hidden>
+      <p class="h2">Камера недоступна</p>
+      <p class="cam-fb-text" id="camFbText">Разрешите доступ к камере в настройках браузера или снимите фото обычной камерой.</p>
+      <button class="btn btn-light" id="camNative"><svg><use href="#i-camera"/></svg>Открыть камеру телефона</button>
+    </div>
+    <button class="btn btn-light cam-resume" id="camResume" hidden><svg><use href="#i-camera"/></svg>Включить камеру</button>
+    <div class="cam-bar">
+      <button class="cam-side" id="camGallery" aria-label="Выбрать фото из галереи"><svg><use href="#i-image"/></svg><span>Галерея</span></button>
+      <button class="shutter" id="camShutter" aria-label="Сделать снимок"><span></span></button>
+      <span class="cam-side cam-side-ghost" aria-hidden="true"></span>
+    </div>
+  </div>
+
+  <!-- Result / meal sheet -->
+  <div class="sheet-wrap" id="mealSheet" hidden>
+    <div class="scrim" data-close></div>
+    <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="mealName">
+      <div class="sheet-photo">
+        <img id="mealPhoto" alt="">
+        <button class="icon-btn icon-btn-float" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button>
+      </div>
+      <div class="sheet-body">
+        <div class="loading" id="mealLoading">
+          <div class="scan" aria-hidden="true"></div>
+          <p class="h2">Считаю…</p>
+          <p class="sub" id="loadingHint">Определяю продукты и вес. Обычно 5–15 секунд.</p>
+          <button class="btn btn-ghost btn-sm" id="cancelAnalyze">Отменить</button>
+        </div>
+
+        <div class="error" id="mealError" hidden>
+          <p class="h2">Не получилось</p>
+          <p class="sub" id="mealErrorText"></p>
+          <div class="row-btns">
+            <button class="btn btn-ghost" id="retryBtn"><svg><use href="#i-refresh"/></svg>Ещё раз</button>
+            <button class="btn btn-ghost" id="retakeBtn"><svg><use href="#i-camera"/></svg>Переснять</button>
+          </div>
+        </div>
+
+        <div id="mealResult" hidden>
+          <p class="eyebrow" id="mealMeta"></p>
+          <h2 class="meal-name" id="mealName"></h2>
+          <div class="totals">
+            <div class="total total-kcal"><b id="tKcal">0</b><span>ккал</span></div>
+            <div class="total"><i style="--c: var(--color-protein)"></i><b id="tP">0</b><span>белки</span></div>
+            <div class="total"><i style="--c: var(--color-fat)"></i><b id="tF">0</b><span>жиры</span></div>
+            <div class="total"><i style="--c: var(--color-carb)"></i><b id="tC">0</b><span>углев.</span></div>
+          </div>
+
+          <div class="question" id="question" hidden>
+            <p class="q-text" id="qText"></p>
+            <div class="chips" id="qOptions"></div>
+          </div>
+
+          <ul class="items" id="items"></ul>
+
+          <details class="refine" id="refine">
+            <summary>Уточнить состав или вес</summary>
+            <label class="field-label" for="caption">Например: «2 котлеты и гречка 200 г, без масла»</label>
+            <div class="refine-row">
+              <input class="input" id="caption" maxlength="300" autocomplete="off" placeholder="Что на тарелке?">
+              <button class="btn btn-ghost btn-sm" id="reanalyze">Пересчитать</button>
+            </div>
+          </details>
+        </div>
+      </div>
+      <footer class="sheet-foot" id="mealFoot" hidden>
+        <button class="btn btn-icon btn-ghost" id="deleteMeal" aria-label="Удалить приём пищи" hidden><svg><use href="#i-trash"/></svg></button>
+        <button class="btn btn-primary" id="saveMeal">Добавить в дневник</button>
+      </footer>
+    </section>
+  </div>
+
+  <!-- Settings sheet -->
+  <div class="sheet-wrap" id="settingsSheet" hidden>
+    <div class="scrim" data-close></div>
+    <section class="sheet sheet-settings" role="dialog" aria-modal="true" aria-labelledby="setTitle">
+      <div class="sheet-head">
+        <h2 class="h2" id="setTitle">Настройки</h2>
+        <button class="icon-btn" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button>
+      </div>
+      <div class="sheet-body">
+        <fieldset class="group">
+          <legend class="field-label">Нейросеть</legend>
+          <label class="radio"><input type="radio" name="model" value="fast"><span><b>Быстрая</b> · GPT-6 Luna<small>Оптимум цены и точности</small></span></label>
+          <label class="radio"><input type="radio" name="model" value="precise"><span><b>Точная</b> · Claude Sonnet 5.5<small>Медленнее, аккуратнее с составом</small></span></label>
+          <label class="radio"><input type="radio" name="model" value="gemini"><span><b>Gemini</b> · 3.5 Flash<small>Сильна в оценке граммов</small></span></label>
+        </fieldset>
+
+        <div class="grid2">
+          <label class="field"><span class="field-label">Калорий в день</span><input class="input" type="number" inputmode="numeric" id="goalKcal" min="800" max="6000" step="50"></label>
+          <label class="field"><span class="field-label">Белков, г</span><input class="input" type="number" inputmode="numeric" id="goalP" min="0" max="400"></label>
+          <label class="field"><span class="field-label">Жиров, г</span><input class="input" type="number" inputmode="numeric" id="goalF" min="0" max="400"></label>
+          <label class="field"><span class="field-label">Углеводов, г</span><input class="input" type="number" inputmode="numeric" id="goalC" min="0" max="800"></label>
+          <label class="field"><span class="field-label">Стакан, мл</span><input class="input" type="number" inputmode="numeric" id="glassMl" min="50" max="1000" step="50"></label>
+          <label class="field"><span class="field-label">Воды в день, мл</span><input class="input" type="number" inputmode="numeric" id="waterGoal" min="250" max="6000" step="250"></label>
+        </div>
+
+        <div class="group">
+          <p class="field-label">Данные</p>
+          <div class="row-btns">
+            <button class="btn btn-ghost btn-sm" id="exportBtn">Экспорт</button>
+            <button class="btn btn-ghost btn-sm" id="importBtn">Импорт</button>
+            <input type="file" id="importInput" accept="application/json" class="sr-only">
+          </div>
+          <p class="sub small">Дневник хранится только на этом устройстве. Фото отправляется нейросети для распознавания; в приложении остаётся лишь миниатюра. Оценка по фото приблизительная (обычно ±20–35%).</p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Activity sheet -->
+  <div class="sheet-wrap" id="actSheet" hidden>
+    <div class="scrim" data-close></div>
+    <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="actSheetTitle">
+      <div class="sheet-head">
+        <h2 class="h2" id="actSheetTitle">Тренировка</h2>
+        <button class="icon-btn" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button>
+      </div>
+      <div class="sheet-body">
+        <div class="act-types" id="actTypes" role="radiogroup" aria-label="Вид активности"></div>
+        <p class="field-label act-label">Интенсивность <span id="actHint"></span></p>
+        <div class="seg" id="actIntensity" role="radiogroup" aria-label="Интенсивность"></div>
+        <p class="field-label act-label">Длительность, мин</p>
+        <div class="dur-row">
+          <div class="chips" id="actDurChips"></div>
+          <input class="input dur-input" id="actDur" type="number" inputmode="numeric" min="5" max="600" step="5" aria-label="Минуты">
+        </div>
+        <div class="act-result"><b id="actKcal">≈ 0</b><span>ккал сверх покоя · ±30%</span></div>
+      </div>
+      <footer class="sheet-foot">
+        <button class="btn btn-icon btn-ghost" id="actDelete" aria-label="Удалить тренировку" hidden><svg><use href="#i-trash"/></svg></button>
+        <button class="btn btn-primary" id="actSave">Отметить</button>
+      </footer>
+    </section>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="calc.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
