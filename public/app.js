@@ -454,25 +454,30 @@
     $('#tKcal').textContent = r0(t.kcal); $('#tP').textContent = r0(t.p); $('#tF').textContent = r0(t.f); $('#tC').textContent = r0(t.c);
   }
 
-  $('#saveMeal').onclick = () => {
+  // Запись блюда в дневник (новое — добавляем, открытое из дневника — сохраняем правки). Возвращает запись или null.
+  function commitDraft(quiet) {
     if (draft.editing) {
       const m = day(draft.day).meals.find(x => x.id === draft.id);
       if (m) m.items = draft.items.map(i => ({ ...i }));
-      const ok = save(); closeDialog(sheet); render(); toast(ok ? 'Сохранено' : STORAGE_FULL, null, null, ok ? 2200 : 6000);
-      return;
+      const ok = save(); closeDialog(sheet); render();
+      if (!quiet) toast(ok ? 'Сохранено' : STORAGE_FULL, null, null, ok ? 2200 : 6000);
+      return ok ? { meal: m, isNew: false } : null;
     }
     const now = new Date(), target = draft.day;
     const time = target === today() ? now : new Date(`${target}T${pad(now.getHours())}:${pad(now.getMinutes())}:00`);
     const meal = { id: Math.random().toString(36).slice(2), time: time.getTime(), type: mealType(time), name: titleOf(draft.items),
       thumb: draft.thumb, items: draft.items.map(i => ({ ...i })), model: draft.model || '' };
     day(target).meals.push(meal);
+    Object.assign(draft, { editing: true, id: meal.id });   // повторное нажатие не создаст дубль
     const ok = save();
     closeDialog(sheet); render();
-    if (!ok) { toast(STORAGE_FULL, null, null, 7000); return; }
-    toast(`Добавлено · ${r0(mealTotals(meal.items).kcal)} ккал`, 'Отменить', () => {
+    if (!ok) { toast(STORAGE_FULL, null, null, 7000); return null; }
+    if (!quiet) toast(`Добавлено · ${r0(mealTotals(meal.items).kcal)} ккал`, 'Отменить', () => {
       day(target).meals = day(target).meals.filter(x => x.id !== meal.id); bury(meal.id); save(); render();
     });
-  };
+    return { meal, isNew: true };
+  }
+  $('#saveMeal').onclick = () => commitDraft(false);
 
   function openMeal(m) {
     abortAnalysis();
@@ -849,7 +854,12 @@
     box.setAttribute('aria-label', 'Калории за неделю: ' + rows.map(r => `${r.wd} ${Math.round(r.eaten)}`).join(', '));
   }
 
-  $('#shareMeal').onclick = () => window.HFSocial?.shareMeal({ name: $('#mealName').textContent, thumb: draft.thumb, items: draft.items.map(i => ({ ...i })), totals: mealTotals(draft.items) });
+  $('#shareMeal').onclick = () => {
+    const d = draft;
+    // отправили другу или в профиль — блюдо сразу засчитывается в дневник
+    window.HFSocial?.shareMeal({ name: $('#mealName').textContent, thumb: d.thumb, items: d.items.map(i => ({ ...i })), totals: mealTotals(d.items),
+      onSent: () => draft === d && !sheet.hidden ? commitDraft(true) : null });
+  };
   window.HF = { get draft() { return draft; }, mealTitle: () => $('#mealName').textContent, setInert, get db() { return db; }, set db(v) { db = v; }, validDb, mergeDb, save, day, mealTotals, openDialog, closeDialog, toast, render, streakInfo, keyOf, today, showTab, loadImage, paintAvatar, actKcal };
 
   /* ---------- day rollover ---------- */

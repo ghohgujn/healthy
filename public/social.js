@@ -586,7 +586,9 @@
       if (toProfile && media) await api('/api/posts', { method: 'POST', body: { media, caption: body, meta } });
       for (const id of picked) await api(`/api/chats/${id}`, { method: 'POST', body: { kind: 'meal', media, meta, body } });
       HF.closeDialog($('#shareSheet'));
-      HF.toast(toProfile && picked.size ? `Опубликовано и отправлено ${picked.size}` : toProfile ? 'Опубликовано в профиле' : picked.size > 1 ? `Отправлено ${picked.size} друзьям` : 'Отправлено');
+      const saved = d.onSent?.();
+      const what = toProfile && picked.size ? `Опубликовано и отправлено ${picked.size}` : toProfile ? 'Опубликовано в профиле' : picked.size > 1 ? `Отправлено ${picked.size} друзьям` : 'Отправлено';
+      HF.toast(saved?.isNew ? `${what} · добавлено в дневник` : what);
       refreshSocial(); window.HFPosts?.refresh();
     } catch (e) { if (!e.network) logError('share', e); HF.toast(e.message); updShare(); }
   };

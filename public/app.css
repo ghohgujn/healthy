@@ -864,3 +864,25 @@ img { display: block; max-width: 100%; }
 .case-items td:nth-child(n+2) { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .case-items tr.chg td { font-weight: 800; color: var(--color-danger); }
 .case-empty { text-align: center; padding: var(--space-xl) 0; }
+
+/* ===== v11: кнопки поверх фото читаются на любом фоне и в одном стиле с крестиком ===== */
+.icon-btn-float, .rail-ico {
+  background: oklch(99% 0.003 90 / 0.86); color: oklch(19% 0.01 260);
+  backdrop-filter: blur(12px) saturate(1.4); -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  /* тонкий тёмный контур виден на белом, светлая заливка — на чёрном, тень отделяет от пёстрого */
+  box-shadow: 0 0 0 0.5px oklch(0% 0 0 / 0.14), 0 4px 14px -4px oklch(0% 0 0 / 0.35);
+}
+.rail-ico svg { width: 22px; height: 22px; }
+.photo-rail { gap: 12px; right: 10px; bottom: 12px; }
+.rail-lbl {
+  color: oklch(19% 0.01 260); text-shadow: none; font-size: 11px; font-weight: 700; letter-spacing: 0.01em;
+  padding: 3px 7px; border-radius: var(--radius-pill);
+  background: oklch(99% 0.003 90 / 0.86); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 0 0 0.5px oklch(0% 0 0 / 0.12), 0 2px 8px -3px oklch(0% 0 0 / 0.3);
+}
+/* треугольник: тёплый янтарный на светлом круге — заметен, но не кричит */
+.rail-warn .rail-ico { color: oklch(76% 0.16 70); --alert-ink: oklch(99% 0.003 90); }
+.rail-warn.attn .rail-ico { background: oklch(84% 0.16 85); color: oklch(22% 0.04 85); --alert-ink: oklch(84% 0.16 85); }
+.rail-warn.attn .rail-lbl { background: oklch(84% 0.16 85); color: oklch(22% 0.04 85); }
+/* в тёмной теме тот же светлый матовый стиль: кнопки лежат на фото, а не на интерфейсе — так их видно и на чёрной еде */
+.icon-btn-float:hover { background: oklch(100% 0 0 / 0.95); }
