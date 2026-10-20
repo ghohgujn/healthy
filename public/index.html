@@ -135,7 +135,8 @@
         <ul class="act-list" id="actList"></ul>
         <div class="steps-row card">
           <div><p class="h3">Шаги</p><p class="sub" id="stepsKcal">не учтены</p></div>
-          <input class="input steps-input" id="stepsInput" type="number" inputmode="numeric" min="0" max="100000" step="500" placeholder="0" aria-label="Шаги за день">
+          <div class="steps-ctl"><button class="btn btn-ghost btn-sm" id="stepsHealth" hidden><svg aria-hidden="true"><use href="#i-heart"/></svg>Из «Здоровья»</button>
+          <input class="input steps-input" id="stepsInput" type="number" inputmode="numeric" min="0" max="100000" step="500" placeholder="0" aria-label="Шаги за день"></div>
         </div>
         <p class="sub small">Калории активности — оценка по таблицам MET (±30%). Они прибавляются к дневной норме.</p>
       </div>

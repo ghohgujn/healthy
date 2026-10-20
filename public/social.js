@@ -201,43 +201,94 @@
     } catch {}
   }
   setInterval(() => { if (me && !document.hidden) pullHealth(); }, 10 * 60 * 1000);
+  /* «Здоровье»: на iPhone — готовая «Быстрая команда» (2 нажатия), на Android — Health Connect */
+  const SC_NAME = 'Healthy Fit';
+  const scLink = () => (window.KBJU_CONFIG || {}).healthShortcut || '';
+  const isAndroid = /Android/i.test(navigator.userAgent);
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const healthUrl = () => `${location.origin}/api/health/ingest?t=${me.healthToken}`;
+  function lastHealth() { const days = Object.keys(HF.db.health || {}).sort(); return days[days.length - 1]; }
+  // запустить команду: она прочитает «Здоровье» и отправит шаги и калории на сервер
+  function runShortcut() {
+    lsSet('hf.hcRun', String(Date.now()));
+    const back = standalone ? '' : `&x-success=${encodeURIComponent(location.origin + '/?health=sync')}&x-cancel=${encodeURIComponent(location.origin + '/?health=cancel')}`;
+    location.href = `shortcuts://x-callback-url/run-shortcut?name=${encodeURIComponent(SC_NAME)}${back}`;
+  }
+  async function afterSync(silent) {
+    await pullHealth(); renderHealthCard();
+    const h = HF.db.health?.[HF.today()];
+    if (h && (h.steps || h.active_kcal)) { lsSet('hf.hcOk', '1'); if (!silent) HF.toast(`Из «Здоровья»: ${Math.round(h.steps).toLocaleString('ru-RU')} шагов · ${Math.round(h.active_kcal)} ккал`); }
+    else if (!silent) HF.toast('Данных за сегодня пока нет — проверьте доступ команды к «Здоровью»');
+  }
+  window.HFHealth = { run: runShortcut, afterSync, ready: () => isIOS && lsGet('hf.hcOk') === '1' };
   function renderHealthCard() {
     const c = $('#healthCard'); if (!c) return;
-    const days = Object.keys(HF.db.health || {}).sort(), last = days[days.length - 1];
+    const last = lastHealth(), ok = isIOS && lsGet('hf.hcOk') === '1';
     c.innerHTML = `<div class="row-between"><div><h2 class="h2">«Здоровье» и браслеты</h2>
-      <p class="sub">${last ? `Последние данные: ${new Date(last + 'T12:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}` : 'Шаги и активные калории — автоматически'}</p></div>
-      <button class="btn btn-ghost btn-sm" id="healthOpen">${last ? 'Настроить' : 'Подключить'}</button></div>`;
+      <p class="sub">${last ? `Обновлено: ${new Date(last + 'T12:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}` : 'Шаги и активные калории — автоматически'}</p></div>
+      ${ok ? '<button class="btn btn-primary btn-sm" id="healthSync">Обновить</button>' : `<button class="btn btn-ghost btn-sm" id="healthOpen">${last ? 'Настроить' : 'Подключить'}</button>`}</div>
+      ${ok ? '<button class="link-btn small" id="healthOpen">Настройки и автообновление</button>' : ''}`;
     $('#healthOpen').onclick = openHealth;
+    $('#healthSync')?.addEventListener('click', runShortcut);
+    // на iPhone — кнопка «Из «Здоровья»» прямо у шагов: настроено → обновить, нет → открыть подключение
+    const sb = $('#stepsHealth'); if (sb) { sb.hidden = !me || isAndroid; sb.onclick = ok ? runShortcut : openHealth; }
   }
   async function openHealth() {
     const g = $('#healthGuide');
     if (!me) { g.innerHTML = `<p>Чтобы телефон присылал шаги и калории, нужен аккаунт: так данные попадут именно к вам.</p><button class="btn btn-primary" id="hgAuth">Войти или создать аккаунт</button>`;
       HF.openDialog($('#healthSheet')); $('#hgAuth').onclick = () => { HF.closeDialog($('#healthSheet')); HF.showTab('chats'); }; return; }
-    let token = me.healthToken;
-    if (!token) { try { token = (await api('/api/me')).me.healthToken; me.healthToken = token; } catch {} }
-    const url = `${location.origin}/api/health/ingest?t=${token}`;
-    g.innerHTML = `
-      <p class="sub">Ваш личный адрес для отправки данных. Никому его не показывайте.</p>
+    if (!me.healthToken) { try { me.healthToken = (await api('/api/me')).me.healthToken; } catch {} }
+    const url = healthUrl(), link = scLink(), added = lsGet('hf.hcAdded') === '1', ok = lsGet('hf.hcOk') === '1';
+    const ios = `
+      <ol class="hc-steps">
+        <li class="${added ? 'done' : 'now'}"><div><b>Добавьте команду</b>
+          <p class="sub small">Адрес уже скопирован — в «Командах» нажмите «Вставить» и «Добавить».</p></div>
+          ${link ? `<button class="btn ${added ? 'btn-ghost' : 'btn-primary'} btn-sm" id="hcAdd">${added ? 'Ещё раз' : 'Добавить'}</button>` : ''}</li>
+        <li class="${ok ? 'done' : added ? 'now' : ''}"><div><b>Запустите один раз</b>
+          <p class="sub small">Разрешите доступ к шагам и энергии. Дальше — кнопка «Обновить».</p></div>
+          <button class="btn ${added && !ok ? 'btn-primary' : 'btn-ghost'} btn-sm" id="hcRun">Запустить</button></li>
+        <li class="${lsGet('hf.hcAuto') === '1' ? 'done' : ''}"><div><b>Сами каждый день <span class="sub">— по желанию</span></b>
+          <p class="sub small">«Команды» → «Автоматизация» → <b>+</b> → «Время суток» (21:00) → «Запускать сразу» → «${SC_NAME}».</p></div>
+          <button class="btn btn-ghost btn-sm" id="hcAuto">${lsGet('hf.hcAuto') === '1' ? 'Готово ✓' : 'Сделал'}</button></li>
+      </ol>
+      ${link ? '' : `<p class="plan-warn">Готовая команда ещё не опубликована — пока соберите её сами по инструкции ниже (2 минуты).</p>`}
+      <details class="hg"${link ? '' : ' open'}><summary>Собрать команду вручную</summary><ol>
+        <li>«Команды» → <b>+</b> → назовите <b>${SC_NAME}</b>.</li>
+        <li><b>Текст</b> — вставьте ваш адрес (кнопка «Копировать» ниже).</li>
+        <li><b>Найти образцы здоровья</b>: «Шаги», дата начала — «Сегодня» → <b>Вычислить статистику</b> → «Сумма».</li>
+        <li>То же для <b>«Активная энергия»</b>.</li>
+        <li><b>Получить содержимое URL</b>: URL — «Текст», метод <b>POST</b>, тело <b>JSON</b>: <code>steps</code> = первая сумма, <code>active_kcal</code> = вторая.</li>
+      </ol></details>`;
+    const android = `<ol class="hc-steps">
+        <li class="now"><div><b>Health Connect</b><p class="sub small">Шагомер (Google Fit, Samsung Health, Mi Fitness, Zepp…) должен писать данные в Health Connect.</p></div></li>
+        <li><div><b>Приложение HC Webhook</b><p class="sub small">GitHub: mcnaveen/health-connect-webhook. Доступ к «Шагам» и «Активным калориям», Webhook URL — ваш адрес ниже, интервал 1–3 часа.</p></div></li>
+      </ol>`;
+    g.innerHTML = `${isAndroid ? android : ios}
+      <details class="hg"><summary>${isAndroid ? 'Для iPhone' : 'Для Android'}</summary>${isAndroid ? ios.replace(/id="hc(Add|Run|Auto)"/g, 'data-x="$1"') : android}</details>
+      <p class="field-label">Ваш личный адрес — никому не показывайте</p>
       <div class="copy-row"><code id="hgUrl">${esc(url)}</code><button class="btn btn-ghost btn-sm" id="hgCopy">Копировать</button></div>
-      <details class="hg" open><summary>iPhone — «Быстрые команды»</summary><ol>
-        <li>Откройте «Команды» → <b>+</b> → «Добавить действие» → <b>Найти образцы здоровья</b>: тип «Шаги», дата «Сегодня», группировать «День».</li>
-        <li>Добавьте <b>Вычислить статистику</b> → «Сумма» — получится число шагов.</li>
-        <li>Повторите для типа <b>«Активная энергия»</b> (тоже «Сумма»).</li>
-        <li>Добавьте <b>Получить содержимое URL</b>: вставьте адрес выше, метод <b>POST</b>, тело <b>JSON</b>, поля: <code>steps</code> = сумма шагов, <code>active_kcal</code> = сумма энергии.</li>
-        <li>Вкладка «Автоматизация» → «Время суток» → каждые несколько часов (например, 12:00, 18:00, 23:30) → «Запускать сразу» → выберите эту команду.</li>
-      </ol></details>
-      <details class="hg"><summary>Android — Health Connect</summary><ol>
-        <li>Убедитесь, что шагомер (Google Fit, Samsung Health, Mi Fitness, Zepp и т.п.) пишет данные в <b>Health Connect</b>.</li>
-        <li>Установите открытое приложение <b>HC Webhook</b> (GitHub: mcnaveen/health-connect-webhook).</li>
-        <li>Дайте доступ к «Шагам» и «Активным калориям», вставьте адрес выше как Webhook URL, интервал — 1–3 часа.</li>
-      </ol></details>
-      <p class="sub small">Активные калории из «Здоровья» уже включают тренировки с часов, поэтому за день учитывается большее: они или ваши отметки в календаре.</p>
-      <div class="row-btns"><button class="btn btn-ghost btn-sm" id="hgPull">Обновить сейчас</button><button class="btn btn-ghost btn-sm" id="hgRotate">Сменить адрес</button></div>`;
+      <p class="sub small">За день учитывается большее: активные калории из «Здоровья» или ваши тренировки и шаги — тренировка с часов не посчитается дважды.</p>
+      <div class="row-btns"><button class="btn btn-ghost btn-sm" id="hgPull">Проверить данные</button><button class="btn btn-ghost btn-sm" id="hgRotate">Сменить адрес</button></div>`;
     HF.openDialog($('#healthSheet'));
-    $('#hgCopy').onclick = async () => { try { await navigator.clipboard.writeText(url); HF.toast('Скопировано'); } catch { getSelection().selectAllChildren($('#hgUrl')); } };
-    $('#hgPull').onclick = async () => { await pullHealth(); renderHealthCard(); HF.toast('Данные обновлены'); };
-    $('#hgRotate').onclick = async () => { try { me.healthToken = (await api('/api/me/health-token', { method: 'POST' })).healthToken; HF.closeDialog($('#healthSheet')); openHealth(); HF.toast('Адрес сменён — обновите его в команде'); } catch (e) { HF.toast(e.message); } };
+    const copy = async () => { try { await navigator.clipboard.writeText(url); return true; } catch { getSelection().selectAllChildren($('#hgUrl')); return false; } };
+    $('#hgCopy').onclick = async () => { if (await copy()) HF.toast('Адрес скопирован'); };
+    $('#hcAdd')?.addEventListener('click', async () => {
+      await copy(); lsSet('hf.hcAdded', '1');
+      location.href = link;   // iCloud-страница команды → «Добавить быструю команду» → вставить адрес
+    });
+    $('#hcRun')?.addEventListener('click', () => { lsSet('hf.hcAdded', '1'); runShortcut(); });
+    $('#hcAuto')?.addEventListener('click', () => { lsSet('hf.hcAuto', '1'); HF.closeDialog($('#healthSheet')); openHealth(); });
+    $('#hgPull').onclick = () => afterSync(false);
+    $('#hgRotate').onclick = async () => { try { me.healthToken = (await api('/api/me/health-token', { method: 'POST' })).healthToken; lsSet('hf.hcAdded', '0'); lsSet('hf.hcOk', '0'); HF.closeDialog($('#healthSheet')); openHealth(); HF.toast('Адрес сменён — добавьте команду заново'); } catch (e) { HF.toast(e.message); } };
   }
+  // вернулись из «Команд» (вкладка снова видна) — подтягиваем свежие данные
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden || !me) return;
+    if (Date.now() - +(lsGet('hf.hcRun') || 0) < 3 * 60 * 1000) { lsSet('hf.hcRun', '0'); setTimeout(() => afterSync(false), 1200); }
+  });
 
   /* ================= friends & inbox ================= */
   let prevUnread = null, prevIncoming = null;
@@ -602,8 +653,6 @@
 
   /* ================= пуш-уведомления ================= */
   const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
-  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
   let swReg = null;
   if ('serviceWorker' in navigator && !mock) {
     navigator.serviceWorker.register('/sw.js').then(r => { swReg = r; }).catch(e => logError('sw', e));
@@ -689,9 +738,10 @@
   async function route(href) {
     if (!me) return;
     const u = new URL(href || location.href, location.origin), p = u.searchParams;
-    if (![...p.keys()].some(k => ['chat', 'user', 'post', 'tab'].includes(k))) return;
+    if (![...p.keys()].some(k => ['chat', 'user', 'post', 'tab', 'health'].includes(k))) return;
     try { history.replaceState(null, '', '/'); } catch {}
     try {
+      if (p.get('health') === 'sync') { lsSet('hf.hcRun', '0'); setTimeout(() => afterSync(false), 800); }
       if (p.get('tab')) HF.showTab(p.get('tab'));
       if (p.get('chat')) {
         const id = +p.get('chat'); HF.showTab('chats');
@@ -706,7 +756,7 @@
   /* ================= hooks ================= */
   $('#chatAva').onclick = $('#chatName').onclick = () => { if (peer) window.HFPosts?.openUser(peer.id); };
   window.HFSocial = {
-    onTab(name) { tab = name; if (name === 'chats') { renderAuth(); if (me) { renderInbox(); refreshSocial(); } } if (name === 'profile') { renderAccountCard(); renderHealthCard(); } },
+    onTab(name) { tab = name; if (name === 'chats') { renderAuth(); if (me) { renderInbox(); refreshSocial(); } } if (name === 'profile') { renderAccountCard(); renderHealthCard(); } if (name === 'activity') renderHealthCard(); },
     onSave, shareMeal, checkName, api, avaHTML, esc, flameBadge, openChat, plural, refreshSocial,
     get friends() { return friends; },
     get me() { return me; },

@@ -969,3 +969,17 @@ img { display: block; max-width: 100%; }
 .push-banner #pushBanX { position: static; width: 36px; height: 36px; }
 .push-banner #pushBanX svg { width: 18px; height: 18px; }
 @media (max-width: 360px) { .push-banner b { font-size: var(--text-xs); } }
+
+/* ===== v14: подключение «Здоровья» по шагам ===== */
+.hc-steps { list-style: none; counter-reset: hc; margin: 0 0 var(--space-md); padding: 0; display: grid; gap: var(--space-sm); }
+.hc-steps li { counter-increment: hc; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: var(--space-sm); align-items: center; padding: var(--space-sm); border-radius: 16px; background: var(--color-paper-2); }
+.hc-steps li::before { content: counter(hc); width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; background: var(--color-card); color: var(--color-ink-2); border: 1.5px solid var(--color-rule-strong); }
+.hc-steps li.now::before { background: var(--color-ink); color: var(--color-on-ink); border-color: var(--color-ink); }
+.hc-steps li.done::before { content: '✓'; background: var(--color-ok); color: #fff; border-color: var(--color-ok); }
+.hc-steps li > div { min-width: 0; }
+.hc-steps li p { margin: 2px 0 0; }
+.hc-steps li:not(:has(button)) { grid-template-columns: 32px minmax(0, 1fr); }
+.steps-ctl { display: flex; align-items: center; gap: var(--space-xs); }
+#stepsHealth { white-space: nowrap; gap: 4px; }
+#stepsHealth svg { width: 14px; height: 14px; color: var(--color-danger); }
+@media (max-width: 360px) { #stepsHealth { font-size: 11px; padding: 0 8px; } .hc-steps li { grid-template-columns: 28px minmax(0, 1fr); } .hc-steps li > button { grid-column: 2; justify-self: start; } }
