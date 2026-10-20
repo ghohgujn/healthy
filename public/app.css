@@ -1066,7 +1066,7 @@ img { display: block; max-width: 100%; }
 /* ===== v17: «Поделиться» — одна главная кнопка на фото, «Неточно» — тихая строка ===== */
 .photo-rail { gap: 0; }
 .rail-ico { width: 52px; height: 52px; }
-.rail-ico svg { width: 24px; height: 24px; transform: translateX(-1px); }
+.rail-ico svg { width: 24px; height: 24px; }
 .report-link { display: inline-flex; align-items: center; gap: 6px; margin: var(--space-sm) 0 0; padding: 0 2px; min-height: 44px; border: 0; background: none;
   color: var(--color-muted); font-size: var(--text-xs); font-weight: 600; }
 .report-link svg { width: 14px; height: 14px; color: currentColor; --alert-ink: var(--color-paper); opacity: 0.8; }

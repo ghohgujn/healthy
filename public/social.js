@@ -678,7 +678,7 @@
   }
   async function shareMeal(d) {
     if (!me) { HF.toast('Войдите, чтобы делиться с друзьями'); HF.showTab('chats'); return; }
-    shareData = d; picked.clear(); toProfile = !d.post && !!d.thumb; $('#shareText').value = '';
+    shareData = d; picked.clear(); toProfile = false; $('#shareText').value = '';   // ничего не выбрано заранее — человек сам решает, куда отправить
     $('#shareTitle').textContent = d.post ? 'Отправить публикацию' : 'Отправить другу';
     $('#sharePreview').innerHTML = `${d.thumb ? `<img src="${esc(d.thumb)}" alt="">` : ''}<span><b></b><small>${Math.round(d.totals.kcal)} ккал · Б ${Math.round(d.totals.p)} · Ж ${Math.round(d.totals.f)} · У ${Math.round(d.totals.c)}</small></span>`;
     $('#sharePreview b').textContent = d.name;
