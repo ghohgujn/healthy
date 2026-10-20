@@ -62,12 +62,12 @@
       <div class="brand"><span class="brand-dot" aria-hidden="true"></span>Healthy Fit</div>
       <div class="top-right">
         <button class="streak-chip" id="streakChip" aria-label="Серия дней"><svg><use href="#i-flame"/></svg><b id="streakNum">0</b></button>
-        <button class="icon-btn inbox-btn" id="inboxBtn" aria-label="Сообщения и друзья"><svg><use href="#i-chat"/></svg><i class="badge" id="chatBadge" hidden></i></button>
         <button class="avatar-btn" id="avatarBtn" aria-label="Профиль"><span class="avatar" id="avatarTop"></span></button>
       </div>
     </header>
 
     <main class="tab" id="tab-today">
+      <div class="day-seg seg" role="radiogroup" aria-label="Раздел дня"><button role="radio" data-goto="today" aria-checked="true">Питание</button><button role="radio" data-goto="activity" aria-checked="false">Активность</button></div>
     <nav class="week" id="week" aria-label="Выбор дня"></nav>
 
       <button class="setup-banner" id="setupBanner" hidden><span><b>Рассчитаем вашу норму</b><small>Цель, рост, вес — 30 секунд</small></span><svg><use href="#i-chev"/></svg></button>
@@ -118,7 +118,8 @@
     </main>
 
     <section class="tab" id="tab-activity" hidden aria-labelledby="actTitle">
-      <div class="tab-head"><h1 class="h1" id="actTitle">Активность</h1></div>
+      <h1 class="sr-only" id="actTitle">Активность</h1>
+      <div class="day-seg seg" role="radiogroup" aria-label="Раздел дня"><button role="radio" data-goto="today" aria-checked="false">Питание</button><button role="radio" data-goto="activity" aria-checked="true">Активность</button></div>
       <div class="card calendar">
         <div class="cal-head">
           <button class="icon-btn" id="calPrev" aria-label="Предыдущий месяц"><svg style="transform:scaleX(-1)"><use href="#i-chev"/></svg></button>
@@ -150,7 +151,7 @@
     </section>
 
     <section class="tab" id="tab-chats" hidden aria-labelledby="chatsTitle">
-      <div class="tab-head chats-head"><button class="icon-btn" id="chatsBack" aria-label="Назад"><svg><use href="#i-back"/></svg></button><h1 class="h1" id="chatsTitle">Сообщения</h1></div>
+      <div class="tab-head"><h1 class="h1" id="chatsTitle">Чаты</h1></div>
       <div id="authBox"></div>
       <div id="socialBox" hidden>
         <div class="push-banner card" id="pushBanner" hidden></div>
@@ -222,9 +223,9 @@
 
     <nav class="tabbar" aria-label="Разделы">
       <button class="tabbtn" data-tab="today" aria-current="page"><svg><use href="#i-home"/></svg><span>Сегодня</span></button>
-      <button class="tabbtn" data-tab="activity"><svg><use href="#i-cal"/></svg><span>Активность</span></button>
-      <span class="tab-gap" aria-hidden="true"></span>
       <button class="tabbtn" data-tab="feed"><svg><use href="#i-spark"/></svg><span>Лента</span></button>
+      <span class="tab-gap" aria-hidden="true"></span>
+      <button class="tabbtn" data-tab="chats"><svg><use href="#i-chat"/></svg><span>Чаты</span><i class="badge" id="chatBadge" hidden></i></button>
       <button class="tabbtn" data-tab="profile"><svg><use href="#i-user"/></svg><span>Профиль</span></button>
     </nav>
 

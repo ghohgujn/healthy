@@ -546,21 +546,22 @@
 
 
   /* ================= v3: tabs ================= */
-  let tab = 'today', backTab = 'feed';
+  let tab = 'today';
   function showTab(name) {
-    if (name === 'chats' && tab !== 'chats') backTab = tab;
     tab = name;
     for (const t of ['today', 'activity', 'feed', 'chats', 'profile']) $('#tab-' + t).hidden = t !== name;
-    $('#inboxBtn').classList.toggle('on', name === 'chats');
+    // «Активность» живёт внутри «Сегодня»: подсвечиваем ту же кнопку внизу
+    const navName = name === 'activity' ? 'today' : name;
+    document.querySelectorAll('.day-seg [data-goto]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.goto === name)));
     window.HFSocial?.onTab(name);
-    document.querySelectorAll('.tabbtn').forEach(b => { if (b.dataset.tab === name) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+    document.querySelectorAll('.tabbtn').forEach(b => { if (b.dataset.tab === navName) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
     window.scrollTo(0, 0);
     render();
   }
   document.querySelectorAll('.tabbtn').forEach(b => b.onclick = () => showTab(b.dataset.tab));
   $('#avatarBtn').onclick = () => showTab('profile');
-  $('#inboxBtn').onclick = () => showTab('chats');
-  $('#chatsBack').onclick = () => showTab(backTab === 'chats' ? 'feed' : backTab);
+  document.querySelectorAll('.day-seg [data-goto]').forEach(b => b.onclick = () => showTab(b.dataset.goto));
+  $('#actLine').style.cursor = 'pointer'; $('#actLine').onclick = () => showTab('activity');
   $('#streakChip').onclick = () => showTab('profile');
 
   /* ================= v3: streak ================= */

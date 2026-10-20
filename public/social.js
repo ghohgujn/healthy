@@ -272,7 +272,7 @@
     for (const u of friends) {
       const b = document.createElement('button'); b.className = 'friend';
       b.innerHTML = `${avaHTML(u, 'friend-ava')}<span>${esc(u.name)}</span>${u.flame && u.flame.state !== 'none' ? `<span class="mini-flame">${flameBadge(u.flame)}</span>` : ''}`;
-      b.onclick = () => window.HFPosts ? window.HFPosts.openUser(u.id) : openChat(u);
+      b.onclick = () => openChat(u);   // сразу в переписку; профиль — по тапу на имя в шапке чата
       row.appendChild(b);
     }
     const rq = $('#requests');
@@ -677,7 +677,7 @@
       let dismissed = false; try { dismissed = localStorage.getItem('hf.pushBanner') === 'off'; } catch {}
       ban.hidden = !me || st === 'on' || st === 'unsupported' || dismissed;
       if (!ban.hidden) {
-        ban.innerHTML = `<svg aria-hidden="true"><use href="#i-bell"/></svg><div><b>Не пропускайте сообщения</b><p class="sub small">${st === 'ios-install' ? 'Добавьте Healthy Fit на экран «Домой» — тогда придут уведомления' : 'Включите уведомления о сообщениях и заявках'}</p></div>
+        ban.innerHTML = `<svg aria-hidden="true"><use href="#i-bell"/></svg><div><b>${st === 'ios-install' ? 'Уведомления — с экрана «Домой»' : 'Уведомления о новых сообщениях'}</b></div>
           <button class="btn btn-primary btn-sm" id="pushBanOn">${st === 'off' ? 'Включить' : 'Как'}</button><button class="icon-btn" id="pushBanX" aria-label="Скрыть"><svg><use href="#i-x"/></svg></button>`;
         $('#pushBanOn').onclick = enablePush;
         $('#pushBanX').onclick = () => { try { localStorage.setItem('hf.pushBanner', 'off'); } catch {} ban.hidden = true; };

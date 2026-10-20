@@ -957,3 +957,15 @@ img { display: block; max-width: 100%; }
 .push-banner { grid-template-columns: 24px minmax(0, 1fr); align-items: start; }
 .push-banner #pushBanOn { grid-column: 2; justify-self: start; }
 @media (max-width: 360px) { .brand { font-size: 1.05rem; } .top-right { gap: 2px; } .top-right .icon-btn { width: 40px; } }
+
+/* ===== v13: «Питание | Активность» внутри «Сегодня» ===== */
+.day-seg { margin: var(--space-xs) 0 var(--space-sm); }
+#tab-activity .day-seg { margin-bottom: var(--space-md); }
+#actLine { text-decoration: underline; text-decoration-color: color-mix(in oklch, currentColor 35%, transparent); text-underline-offset: 3px; }
+.push-banner { grid-template-columns: 22px minmax(0, 1fr) auto 36px; align-items: center; padding: 6px 4px 6px var(--space-sm); gap: var(--space-xs); }
+.push-banner > svg { width: 20px; height: 20px; }
+.push-banner b { font-size: var(--text-sm); line-height: 1.25; }
+.push-banner #pushBanOn { grid-column: auto; min-height: 36px; }
+.push-banner #pushBanX { position: static; width: 36px; height: 36px; }
+.push-banner #pushBanX svg { width: 18px; height: 18px; }
+@media (max-width: 360px) { .push-banner b { font-size: var(--text-xs); } }

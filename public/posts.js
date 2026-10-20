@@ -131,7 +131,7 @@
   function renderFeed() {
     const box = $('#feedView');
     box.innerHTML = feedPosts.length ? feedPosts.map(card).join('') + (feedEnd ? '' : '<button class="btn btn-ghost feed-more" id="feedMore">Показать ещё</button>')
-      : `<div class="grid-empty"><svg><use href="#i-grid"/></svg><p>${scope === 'all' ? 'Пока никто не поделился едой. Будьте первым — сфотографируйте блюдо и нажмите «Поделиться».' : 'Здесь появятся публикации друзей. Найдите друзей через значок сообщений вверху.'}</p></div>`;
+      : `<div class="grid-empty"><svg><use href="#i-grid"/></svg><p>${scope === 'all' ? 'Пока никто не поделился едой. Будьте первым — сфотографируйте блюдо и нажмите «Поделиться».' : 'Здесь появятся публикации друзей. Найдите друзей во вкладке «Чаты» — поиск по логину.'}</p></div>`;
     bindCards(box, feedPosts);
     $('#feedMore')?.addEventListener('click', () => loadFeed(false));
   }
