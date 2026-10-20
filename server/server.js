@@ -128,7 +128,8 @@ const canSee = (me, author) => me === author || areFriends(me, author);
 
 /* ---------------- заявки «посчитано неверно» ---------------- */
 // администратор по умолчанию — @papa; в /etc/healthy.env можно добавить других через запятую
-const ADMINS = new Set(String(process.env.ADMIN_USERS || 'papa').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
+// пустое ADMIN_USERS= отключает админов
+const ADMINS = new Set(String(process.env.ADMIN_USERS ?? 'papa').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const isAdmin = u => Boolean(u && ADMINS.has(String(u.username).toLowerCase()));
 const REASONS = ['dish', 'weight', 'missing', 'extra', 'macros', 'other'];
 const cleanItems = a => JSON.stringify((Array.isArray(a) ? a : []).slice(0, 20).map(i => ({ name: String(i?.name || '').slice(0, 60), grams: num(i?.grams),
@@ -278,13 +279,15 @@ async function analyze(req, res) {
   const d = new Date().toISOString().slice(0, 10); if (d !== aiDay) { aiDay = d; aiCount = 0; }
   if (++aiCount > AI_DAILY) { console.error('AI daily limit reached'); throw fail(503, 'Сегодня лимит распознаваний исчерпан. Попробуйте завтра.'); }
   const tIn = now();
-  const body = await json(req, 4_000_000);
+  const failStat = (why, ms) => { aiStats.push({ at: now(), model: String(body?.model || ''), ms, ok: false, why, kb: 0, upload_ms: 0, prompt: 0, out: 0, reasoning: 0, effort: REASONING }); if (aiStats.length > 200) aiStats.shift(); };
+  let body;
+  body = await json(req, 4_000_000);
   const image = String(body.image || '');
   if (!/^data:image\/(jpeg|png|webp);base64,/.test(image) || image.length > 3_000_000) throw fail(400, 'Нужна фотография JPEG/PNG до ~2 МБ');
   const model = MODELS[body.model] || MODELS.fast;
   const caption = String(body.caption || '').replace(/[<>]/g, '').slice(0, 300);
   const t0 = now(), ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 50_000);
-  let r, usedReasoning = REASONING !== 'off';
+  let r, usedReasoning = REASONING !== 'off' && /^openai\//.test(model.id);   // параметр уходит только моделям OpenAI
   try {
     r = await callAI(aiBody(model, caption, image, true), ctrl.signal);
     if (r.status === 400 && usedReasoning) {
@@ -292,7 +295,8 @@ async function analyze(req, res) {
       if (/reasoning/i.test(txt)) { console.error('reasoning_effort не поддерживается — выключаю'); REASONING = 'off'; usedReasoning = false; r = await callAI(aiBody(model, caption, image, false), ctrl.signal); }
       else { console.error('proxyapi 400', txt.slice(0, 300)); throw fail(502, 'Не получилось распознать. Попробуйте ещё раз.'); }
     }
-  } catch (e) { if (e.public) throw e; throw fail(504, 'Нейросеть не ответила. Попробуйте ещё раз.'); } finally { clearTimeout(timer); }
+  } catch (e) { failStat(e.public ? 'http 400' : 'timeout', now() - t0); if (e.public) throw e; throw fail(504, 'Нейросеть не ответила. Попробуйте ещё раз.'); } finally { clearTimeout(timer); }
+  if (!r.ok) failStat('http ' + r.status, now() - t0);
   // 4xx не повторяем: ProxyAPI ставит ключ на паузу после 20 ошибок в минуту
   if (r.status === 402) { console.error('proxyapi 402: пополните баланс'); throw fail(503, 'Сервис временно недоступен. Попробуйте позже.'); }
   if (r.status === 429) throw fail(429, 'Очередь занята. Попробуйте через минуту.');
@@ -423,7 +427,8 @@ async function api(req, res, url) {
     const r = q('INSERT INTO users (username, name, pass, health_token, created) VALUES (?, ?, ?, ?, ?)')
       .run(username, name, hashPass(pass), randomBytes(18).toString('base64url'), now());
     startSession(res, Number(r.lastInsertRowid));
-    return send(res, 200, { me: pub(q('SELECT * FROM users WHERE id = ?').get(r.lastInsertRowid)) });
+    const nu = q('SELECT * FROM users WHERE id = ?').get(r.lastInsertRowid);
+    return send(res, 200, { me: { ...pub(nu), admin: isAdmin(nu) } });
   }
   if (p === '/api/auth/check' && M === 'GET') {
     rate('check:' + ipOf(req), 120, 60_000);
@@ -437,7 +442,7 @@ async function api(req, res, url) {
     const u = q('SELECT * FROM users WHERE username = ?').get(String(b.username || '').trim());
     if (!u || !checkPass(String(b.password || ''), u.pass)) throw fail(401, 'Неверный логин или пароль');
     startSession(res, u.id);
-    return send(res, 200, { me: pub(u) });
+    return send(res, 200, { me: { ...pub(u), admin: isAdmin(u) } });
   }
   if (p === '/api/me' && M === 'GET' && !userOf(req)) return send(res, 200, { me: null });
   if (p === '/api/auth/logout' && M === 'POST') {
@@ -788,7 +793,7 @@ async function serveStatic(req, res, url) {
   }
   const ext = extname(file);
   // шрифты и иконки не меняются — кэш на год; код и страница — всегда сверяем по ETag (обновления приходят сразу)
-  const cache = /\.(woff2|png|ico)$/.test(file) ? 'public, max-age=31536000, immutable' : 'no-cache';
+  const cache = /\.woff2$/.test(file) ? 'public, max-age=31536000, immutable' : 'no-cache';   // иконки могут смениться под тем же именем — сверяем по ETag
   const headers = { 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Cache-Control': cache, ETag: f.etag };
   if (req.headers['if-none-match'] === f.etag) { res.writeHead(304, headers); return res.end(); }
   res.writeHead(200, { ...headers, 'Content-Length': f.buf.length });
