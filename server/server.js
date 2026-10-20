@@ -341,7 +341,7 @@ async function healthIngest(req, res, url) {
   if (!u) throw fail(401, 'Неверный ключ');
   rate('health:' + u.id, 120, 3_600_000);
   let body; try { body = JSON.parse((await readBody(req, 2_000_000)).toString('utf8')); } catch { throw fail(400, 'Нужен JSON'); }
-  const today = String(url.searchParams.get('date') || body.date || new Date().toISOString()).slice(0, 10);
+  const today = String(url.searchParams.get('date') || body.date || dayKey(now())).slice(0, 10);   // «сегодня» по часовому поясу сервиса (APP_TZ), а не по Гринвичу
   const days = harvest(body, today);
   let saved = 0;
   for (const [date, v] of days) {
