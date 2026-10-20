@@ -324,7 +324,8 @@ function harvest(obj, date0) {
       for (const [k, v] of Object.entries(o)) walk(v, date, (keyPath + '.' + k).toLowerCase());
       return;
     }
-    const n = typeof o === 'string' ? parseFloat(o.replace(',', '.')) : o;
+    // «Команды» на русском могут прислать «8 421» или «412,5 ккал» — убираем пробелы и единицы
+    const n = typeof o === 'string' ? parseFloat(o.replace(/[\s\u00a0\u202f]/g, '').replace(',', '.').replace(/[^\d.\-].*$/, '')) : o;
     if (!Number.isFinite(n) || n < 0) return;
     const leaf = keyPath.split('.').pop();
     if (/step/.test(keyPath) && /(count|steps?|value|total|sum)$/.test(leaf)) add(ctxDate, 'steps', n);
