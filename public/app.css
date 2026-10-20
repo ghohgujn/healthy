@@ -1103,3 +1103,14 @@ img { display: block; max-width: 100%; }
 .inst-ico svg { width: 22px; height: 22px; }
 .inst-note { margin: var(--space-sm) 0 0; }
 .install-sheet .sheet-foot .btn { flex: 1; }
+
+/* ===== v19: окна по видимой области экрана — над клавиатурой ===== */
+.chat, .uview, .sheet-wrap { top: var(--vvt, 0px); bottom: auto; height: var(--vvh, 100%); }
+.sheet { max-height: min(94dvh, calc(var(--vvh, 100dvh) - 8px)); }
+.post-sheet, .report-sheet, .cases-sheet { max-height: min(92dvh, calc(var(--vvh, 100dvh) - 8px)); }
+/* клавиатура открыта: отступ под «чёлку» снизу не нужен, панель вкладок прячем */
+.kb-open .composer, .kb-open .comment-form, .kb-open .sheet-foot { padding-bottom: 8px; }
+.kb-open .tabbar, .kb-open .fab { visibility: hidden; }
+.kb-open .sheet { border-radius: 20px 20px 0 0; }
+.kb-open .post-sheet .fcard.in-sheet .fc-photo { max-height: 28vh; }
+.onb { top: var(--vvt, 0px); bottom: auto; height: var(--vvh, 100%); }

@@ -940,6 +940,27 @@
     });
   });
 
+  /* ---------- клавиатура на телефоне ----------
+     iOS не сжимает экран под клавиатуру для закреплённых окон — поле ввода оказывается под ней.
+     Берём видимую область (visualViewport) и подгоняем под неё чат и нижние панели. */
+  const vv = window.visualViewport;
+  function syncViewport() {
+    if (!vv || vv.height < 120) return;   // защита от «нулевой» высоты при загрузке
+    const root = document.documentElement, kb = Math.max(0, Math.round(innerHeight - vv.height - vv.offsetTop));
+    root.style.setProperty('--vvh', `${Math.round(vv.height)}px`);
+    root.style.setProperty('--vvt', `${Math.round(vv.offsetTop)}px`);
+    const open = kb > 80; root.classList.toggle('kb-open', open);
+    if (open) {
+      // поле, в котором печатают, держим в поле зрения; ленту чата — у последнего сообщения
+      const a = document.activeElement;
+      if (a && /^(INPUT|TEXTAREA)$/.test(a.tagName)) requestAnimationFrame(() => a.scrollIntoView({ block: 'nearest' }));
+      const sc = document.querySelector('#chat:not([hidden]) .chat-scroll'); if (sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight < 160) sc.scrollTop = sc.scrollHeight;
+    }
+  }
+  if (vv) { vv.addEventListener('resize', syncViewport); vv.addEventListener('scroll', syncViewport); syncViewport(); }
+  // фокус в поле внутри окна — iOS любит прокрутить саму страницу; возвращаем её на место
+  document.addEventListener('focusin', e => { if (e.target.closest?.('.chat, .sheet-wrap, .uview')) setTimeout(() => { if (scrollY && stack.length) scrollTo(0, 0); syncViewport(); }, 60); });
+
   window.HF = { goBack, get draft() { return draft; }, mealTitle: () => $('#mealName').textContent, setInert, get db() { return db; }, set db(v) { db = v; }, validDb, mergeDb, save, day, mealTotals, openDialog, closeDialog, toast, render, streakInfo, keyOf, today, showTab, loadImage, paintAvatar, actKcal };
 
   /* ---------- day rollover ---------- */
