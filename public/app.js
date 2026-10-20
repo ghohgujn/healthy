@@ -194,7 +194,8 @@
     }
   }
 
-  function render() { renderWeek(); renderSummary(); renderWater(); renderMeals(); renderTop(); if (tab === 'activity') renderActivity(); if (tab === 'profile') renderProfile(); }
+  // рисуем только то, что сейчас на экране; остальное — при переходе на вкладку (showTab вызывает render)
+  function render() { renderTop(); if (tab === 'today') { renderWeek(); renderSummary(); renderWater(); renderMeals(); } if (tab === 'activity') renderActivity(); if (tab === 'profile') renderProfile(); }
 
   /* ---------- dialogs: focus trap + scroll lock ---------- */
   const stack = [];
@@ -304,7 +305,7 @@
   $('#camShutter').onclick = () => {
     const w = video.videoWidth, h = video.videoHeight;
     if (!w || !h) { toast('Камера ещё запускается'); return; }
-    const image = toJpeg(video, w, h, 1024, 0.85), thumb = toJpeg(video, w, h, 320, 0.7);
+    const image = toJpeg(video, w, h, 1024, 0.8), thumb = toJpeg(video, w, h, 320, 0.7);
     const fl = document.createElement('div'); fl.className = 'flash'; camEl.appendChild(fl); setTimeout(() => fl.remove(), 300);
     $('#camFrozen').src = thumb; $('#camFrozen').hidden = false; camEl.classList.add('shot');
     stopStream();
@@ -322,7 +323,7 @@
     let img;
     try { img = await loadImage(file); } catch { toast('Не удалось открыть фото. Попробуйте JPEG или PNG.'); return; }
     if (!camEl.hidden) closeCamera();
-    startAnalysis(toJpeg(img, img.naturalWidth, img.naturalHeight, 1024, 0.85), toJpeg(img, img.naturalWidth, img.naturalHeight, 320, 0.7));
+    startAnalysis(toJpeg(img, img.naturalWidth, img.naturalHeight, 1024, 0.8), toJpeg(img, img.naturalWidth, img.naturalHeight, 320, 0.7));
   }
   $('#photoInput').addEventListener('change', onFile);
   $('#cameraInput').addEventListener('change', onFile);
@@ -367,8 +368,10 @@
     inflight = ctrl;
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, 45000);
-    const slow = setTimeout(() => { if (my === reqSeq) $('#loadingHint').textContent = 'Почти готово, нейросеть внимательно смотрит на тарелку…'; }, 12000);
-    $('#loadingHint').textContent = 'Определяю продукты и вес. Обычно 5–15 секунд.';
+    // этапы ожидания: человек видит, что работа идёт, а не «зависло»
+    const steps = [[0, 'Отправляю фото…'], [1200, 'Смотрю на тарелку…'], [3500, 'Определяю продукты…'], [7000, 'Оцениваю граммы и жирность…'], [12000, 'Почти готово…'], [22000, 'Нейросеть сегодня неторопливая — ещё немного…']];
+    const stepTimers = steps.map(([ms, text]) => setTimeout(() => { if (my === reqSeq) $('#loadingHint').textContent = text; }, ms));
+    const slow = { clear: () => stepTimers.forEach(clearTimeout) };
     showState('loading');
     try {
       let data;
@@ -393,7 +396,7 @@
       $('#mealErrorText').textContent = timedOut ? 'Нейросеть отвечает слишком долго. Попробуйте ещё раз или переснимите.'
         : navigator.onLine === false ? 'Нет интернета. Проверьте подключение.' : err.message;
       showState('error'); $('#retryBtn').focus();
-    } finally { clearTimeout(timer); clearTimeout(slow); if (inflight === ctrl) inflight = null; }
+    } finally { clearTimeout(timer); slow.clear(); if (inflight === ctrl) inflight = null; }
   }
   $('#cancelAnalyze').onclick = () => closeDialog(sheet);
   $('#retryBtn').onclick = analyze;

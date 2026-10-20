@@ -202,14 +202,22 @@
   let taps = [];
   $('#aboutTitle')?.addEventListener('click', () => {
     const t = Date.now(); taps = taps.filter(x => t - x < 2500); taps.push(t);
-    if (taps.length >= 5) { taps = []; openDev(); }
+    if (taps.length >= 5) { taps = []; if (S()?.me?.admin) openDev(); }   // панель — только администратору (@papa)
   });
   function openDev() {
     document.querySelectorAll('#devSheet input[name="model"]').forEach(r => { r.checked = r.value === HF.db.settings.model; });
     const d = HF.db, meals = Object.values(d.days).reduce((a, x) => a + (x.meals?.length || 0), 0);
     let size = 0; try { size = (localStorage.getItem('healthyfit.v1') || '').length; } catch {}
-    $('#devInfo').innerHTML = `<p class="field-label">Состояние</p><p class="sub small">Аккаунт: ${S()?.me ? '@' + esc(S().me.username) : 'не вошли'} · приёмов пищи: ${meals} · дней: ${Object.keys(d.days).length} · хранилище: ${(size / 1024).toFixed(0)} КБ</p>`;
+    $('#devInfo').innerHTML = `<p class="field-label">Состояние</p><p class="sub small">Аккаунт: ${S()?.me ? '@' + esc(S().me.username) : 'не вошли'} · приёмов пищи: ${meals} · дней: ${Object.keys(d.days).length} · хранилище: ${(size / 1024).toFixed(0)} КБ</p>
+      <p class="field-label">Скорость распознавания</p><div class="sub small" id="devAi">Загружаю…</div>`;
     HF.openDialog($('#devSheet'));
+    S()?.api('/api/admin/stats').then(r => {
+      const sec = ms => (ms / 1000).toFixed(1).replace('.', ',') + ' с';
+      $('#devAi').innerHTML = !r.runs ? 'Пока не было распознаваний после перезапуска сервера.' :
+        `Обычно <b>${sec(r.p50)}</b>, медленные — <b>${sec(r.p95)}</b> (последние ${Math.min(50, r.runs)}). Фото ≈ ${r.kb} КБ, загрузка ${r.upload} мс.<br>
+        Токены: ответ ≈ ${r.out}, из них «размышления» ≈ ${r.reasoning} · уровень размышлений: <b>${esc(r.effort)}</b> · лимит ${r.maxTokens}.<br>
+        Сегодня распознаваний: ${r.today} · ошибок: ${r.fails} · пользователей: ${r.users}`;
+    }).catch(e => { $('#devAi').textContent = e.message; });
   }
   $('#devOnboard').onclick = () => { HF.closeDialog($('#devSheet')); open(true); };
   $('#devHealth').onclick = async () => {

@@ -22,7 +22,8 @@ await mkdir(MEDIA, { recursive: true });
 /* ---------------- DB ---------------- */
 const db = new DatabaseSync(join(DATA, 'healthy.db'));
 db.exec(`
-PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;
+PRAGMA temp_store = MEMORY; PRAGMA cache_size = -16000; PRAGMA mmap_size = 134217728;
 CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL COLLATE NOCASE, name TEXT NOT NULL,
   pass TEXT NOT NULL, avatar TEXT, bio TEXT DEFAULT '', health_token TEXT UNIQUE, created INTEGER NOT NULL,
   stats TEXT DEFAULT '{}', sync TEXT, sync_at INTEGER);
@@ -46,12 +47,24 @@ CREATE INDEX IF NOT EXISTS push_user ON push_subs (user_id);
 CREATE TABLE IF NOT EXISTS health (user_id INTEGER NOT NULL, date TEXT NOT NULL, steps INTEGER, active_kcal INTEGER, source TEXT, updated INTEGER NOT NULL,
   PRIMARY KEY (user_id, date));
 `);
-const q = sql => db.prepare(sql);
+// подготовленные запросы кэшируем: компиляция SQL на каждый вызов — лишняя работа
+const stmts = new Map();
+const q = sql => { let st = stmts.get(sql); if (!st) { st = db.prepare(sql); stmts.set(sql, st); } return st; };
 // миграции: добавляем колонки, если их ещё нет
 for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER']])
   if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${def}`);
 db.exec(`CREATE TABLE IF NOT EXISTS comment_likes (comment_id INTEGER NOT NULL, user_id INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (comment_id, user_id));
-CREATE INDEX IF NOT EXISTS posts_vis ON posts (vis, id);`);
+CREATE INDEX IF NOT EXISTS posts_vis ON posts (vis, id);
+CREATE INDEX IF NOT EXISTS friends_b ON friends (b, status);
+CREATE INDEX IF NOT EXISTS friends_a ON friends (a, status);
+CREATE INDEX IF NOT EXISTS posts_media ON posts (media);
+CREATE INDEX IF NOT EXISTS msg_media ON messages (media);
+CREATE INDEX IF NOT EXISTS msg_unread ON messages (recipient, read_at, sender);
+CREATE INDEX IF NOT EXISTS users_avatar ON users (avatar);
+CREATE INDEX IF NOT EXISTS comments_parent ON comments (parent_id);
+CREATE INDEX IF NOT EXISTS reports_status ON reports (status, id);
+CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id);`);
+db.exec('PRAGMA optimize');
 const now = () => Date.now();
 
 /* ---------------- helpers ---------------- */
@@ -114,7 +127,8 @@ const areFriends = (a, b) => friendState(a, b) === 'friends';
 const canSee = (me, author) => me === author || areFriends(me, author);
 
 /* ---------------- заявки «посчитано неверно» ---------------- */
-const ADMINS = new Set(String(process.env.ADMIN_USERS || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
+// администратор по умолчанию — @papa; в /etc/healthy.env можно добавить других через запятую
+const ADMINS = new Set(String(process.env.ADMIN_USERS || 'papa').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const isAdmin = u => Boolean(u && ADMINS.has(String(u.username).toLowerCase()));
 const REASONS = ['dish', 'weight', 'missing', 'extra', 'macros', 'other'];
 const cleanItems = a => JSON.stringify((Array.isArray(a) ? a : []).slice(0, 20).map(i => ({ name: String(i?.name || '').slice(0, 60), grams: num(i?.grams),
@@ -191,7 +205,18 @@ const TZ = process.env.APP_TZ || 'Europe/Moscow';
 const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
 const dayKey = t => dayFmt.format(new Date(t));
 const prevDay = k => { const d = new Date(k + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); };
+// огонёк считаем по истории переписки — результат кэшируем на 30 с и сбрасываем при новом сообщении
+const flameCache = new Map();
+const dropFlame = (a, b) => { flameCache.delete(`${a}:${b}`); flameCache.delete(`${b}:${a}`); };
 function flame(me, other) {
+  const key = `${me}:${other}`, hit = flameCache.get(key);
+  if (hit && now() - hit.at < 30_000) return hit.v;
+  const v = flameCalc(me, other);
+  if (flameCache.size > 20000) flameCache.clear();
+  flameCache.set(key, { at: now(), v });
+  return v;
+}
+function flameCalc(me, other) {
   const rows = q(`SELECT sender, created FROM messages WHERE ((sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)) AND created > ?`)
     .all(me, other, other, me, now() - 400 * 864e5);
   const mine = new Set(), theirs = new Set();
@@ -231,26 +256,43 @@ function clean(j) {
     options: (Array.isArray(j.options) ? j.options : []).slice(0, 4).map(o => String(o).slice(0, 40)),
   };
 }
+// Скорость: модель «рассуждает» перед ответом — для оценки еды по фото хватает низкого уровня.
+// Если ProxyAPI/модель не примет параметр, один раз откатываемся без него и запоминаем (без серии 4xx).
+let REASONING = (process.env.AI_REASONING || 'low').toLowerCase();   // low | medium | high | off
+const AI_MAX_TOKENS = Number(process.env.AI_MAX_TOKENS || 2500);
+const AI_BASE = (process.env.AI_BASE_URL || 'https://api.proxyapi.ru/v1').replace(/\/$/, '');
+const aiStats = [];   // последние 200 распознаваний: время, размер фото, токены — для админа
+function aiBody(model, caption, image, withReasoning) {
+  const b = { model: model.id, max_completion_tokens: AI_MAX_TOKENS, messages: [{ role: 'user', content: [
+    { type: 'text', text: PROMPT.replace('{caption}', caption) }, { type: 'image_url', image_url: /^openai\//.test(model.id) ? { url: image, detail: 'auto' } : { url: image } }] }] };
+  if (withReasoning && REASONING !== 'off' && /^openai\//.test(model.id)) b.reasoning_effort = REASONING;
+  return JSON.stringify(b);
+}
+async function callAI(body, signal) {
+  return fetch(`${AI_BASE}/chat/completions`, { method: 'POST', signal, headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' }, body });
+}
 async function analyze(req, res) {
   if (!KEY) throw fail(500, 'Сервер не настроен: нет ключа нейросети');
   rate('ai:' + ipOf(req), LIMIT, 600_000);
   const me = userOf(req); if (me) rate('aiu:' + me.id, LIMIT, 600_000);
   const d = new Date().toISOString().slice(0, 10); if (d !== aiDay) { aiDay = d; aiCount = 0; }
   if (++aiCount > AI_DAILY) { console.error('AI daily limit reached'); throw fail(503, 'Сегодня лимит распознаваний исчерпан. Попробуйте завтра.'); }
+  const tIn = now();
   const body = await json(req, 4_000_000);
   const image = String(body.image || '');
   if (!/^data:image\/(jpeg|png|webp);base64,/.test(image) || image.length > 3_000_000) throw fail(400, 'Нужна фотография JPEG/PNG до ~2 МБ');
   const model = MODELS[body.model] || MODELS.fast;
   const caption = String(body.caption || '').replace(/[<>]/g, '').slice(0, 300);
   const t0 = now(), ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 50_000);
-  let r;
+  let r, usedReasoning = REASONING !== 'off';
   try {
-    r = await fetch('https://api.proxyapi.ru/v1/chat/completions', {
-      method: 'POST', signal: ctrl.signal, headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: model.id, max_completion_tokens: 4000, messages: [{ role: 'user', content: [
-        { type: 'text', text: PROMPT.replace('{caption}', caption) }, { type: 'image_url', image_url: { url: image } }] }] }),
-    });
-  } catch { throw fail(504, 'Нейросеть не ответила. Попробуйте ещё раз.'); } finally { clearTimeout(timer); }
+    r = await callAI(aiBody(model, caption, image, true), ctrl.signal);
+    if (r.status === 400 && usedReasoning) {
+      const txt = await r.text();
+      if (/reasoning/i.test(txt)) { console.error('reasoning_effort не поддерживается — выключаю'); REASONING = 'off'; usedReasoning = false; r = await callAI(aiBody(model, caption, image, false), ctrl.signal); }
+      else { console.error('proxyapi 400', txt.slice(0, 300)); throw fail(502, 'Не получилось распознать. Попробуйте ещё раз.'); }
+    }
+  } catch (e) { if (e.public) throw e; throw fail(504, 'Нейросеть не ответила. Попробуйте ещё раз.'); } finally { clearTimeout(timer); }
   // 4xx не повторяем: ProxyAPI ставит ключ на паузу после 20 ошибок в минуту
   if (r.status === 402) { console.error('proxyapi 402: пополните баланс'); throw fail(503, 'Сервис временно недоступен. Попробуйте позже.'); }
   if (r.status === 429) throw fail(429, 'Очередь занята. Попробуйте через минуту.');
@@ -258,9 +300,12 @@ async function analyze(req, res) {
   const data = await r.json().catch(() => null);
   const m = String(data?.choices?.[0]?.message?.content || '').match(/\{[\s\S]*\}/);
   let parsed = null; try { parsed = m ? JSON.parse(m[0]) : null; } catch {}
+  const u = data?.usage || {}, stat = { at: now(), model: model.id, ms: now() - t0, upload_ms: t0 - tIn, kb: Math.round(image.length * 0.75 / 1024),
+    prompt: u.prompt_tokens || 0, out: u.completion_tokens || 0, reasoning: u.completion_tokens_details?.reasoning_tokens || 0, effort: usedReasoning ? REASONING : 'off', ok: Boolean(parsed) };
+  aiStats.push(stat); if (aiStats.length > 200) aiStats.shift();
+  console.log(`analyze ${model.id} ${stat.ms}ms upload=${stat.upload_ms}ms ${stat.kb}KB tokens in=${stat.prompt} out=${stat.out} reasoning=${stat.reasoning} effort=${stat.effort}`);
   if (!parsed) throw fail(502, 'Нейросеть ответила непонятно. Попробуйте ещё раз.');
-  console.log(`analyze ${model.id} ${now() - t0}ms tokens=${data?.usage?.total_tokens ?? '?'}`);
-  send(res, 200, { ...clean(parsed), model: model.label, ms: now() - t0 });
+  send(res, 200, { ...clean(parsed), model: model.label, ms: stat.ms });
 }
 
 /* ---------------- media ---------------- */
@@ -298,7 +343,8 @@ async function serveMedia(req, res, id) {
     q('SELECT user_id, vis FROM posts WHERE media = ?').all(id).some(p => canSeePost(me.id, p))));
   if (!allowed) { res.writeHead(403); return res.end(); }
   const range = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
-  const headers = { 'Content-Type': m.type, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=86400' };
+  // имена файлов случайные и никогда не меняются — браузер может хранить их «навсегда»
+  const headers = { 'Content-Type': m.type, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=31536000, immutable' };
   if (range) {
     const start = range[1] ? +range[1] : 0, end = range[2] ? Math.min(+range[2], m.size - 1) : m.size - 1;
     if (start > end || start >= m.size) { res.writeHead(416, { 'Content-Range': `bytes */${m.size}` }); return res.end(); }
@@ -435,6 +481,14 @@ async function api(req, res, url) {
     return send(res, 200, { counts, reports: rows.map(r => ({ id: r.id, created: r.created, status: r.status, username: r.username || null,
       reasons: JSON.parse(r.reasons || '[]'), comment: r.comment, title: r.title, model: r.model, confidence: r.confidence, caption: r.caption,
       ai: r.ai ? JSON.parse(r.ai) : null, final: JSON.parse(r.final || '[]'), media: r.media ? `/media/${r.media}` : '', note: r.note || '' })) });
+  }
+  if (p === '/api/admin/stats' && M === 'GET') {
+    if (!isAdmin(me)) throw fail(403, 'Только для администратора');
+    const okRuns = aiStats.filter(x => x.ok), last = okRuns.slice(-50), ms = last.map(x => x.ms).sort((a, b) => a - b);
+    const pct = k => ms.length ? ms[Math.min(ms.length - 1, Math.floor(ms.length * k))] : 0, p50 = pct(0.5), p95 = pct(0.95);
+    const avg = k => last.length ? Math.round(last.reduce((a, x) => a + x[k], 0) / last.length) : 0;
+    return send(res, 200, { runs: aiStats.length, fails: aiStats.length - okRuns.length, p50, p95, upload: avg('upload_ms'), kb: avg('kb'), reasoning: avg('reasoning'), out: avg('out'),
+      effort: REASONING, maxTokens: AI_MAX_TOKENS, users: q('SELECT COUNT(*) n FROM users').get().n, today: aiCount, last: aiStats.slice(-10).reverse() });
   }
   const ar = /^\/api\/admin\/reports\/(\d+)$/.exec(p);
   if (ar && M === 'PATCH') {
@@ -620,6 +674,7 @@ async function api(req, res, url) {
     if (f.state !== 'out') throw fail(400, 'Огонёк не погас');
     if (!f.canRestore) throw fail(409, 'Огонёк уже восстанавливали — второй раз нельзя');
     q('INSERT INTO flame_restores (a, b, day, created) VALUES (?, ?, ?, ?)').run(Math.min(me.id, other), Math.max(me.id, other), f.restoreDay, now());
+    dropFlame(me.id, other);
     return send(res, 200, { flame: flame(me.id, other) });
   }
 
@@ -679,6 +734,7 @@ async function api(req, res, url) {
       if (b.reply) { const rm = q('SELECT id FROM messages WHERE id = ? AND ((sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?))').get(Number(b.reply), me.id, other, other, me.id); replyTo = rm ? rm.id : null; }
       const r = q('INSERT INTO messages (sender, recipient, kind, body, media, meta, created, reply_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
         .run(me.id, other, kind, body, media, meta, now(), replyTo);
+      dropFlame(me.id, other);
       notify(other, { title: me.name, body: msgText(kind, body, meta && JSON.parse(meta)), url: `/?chat=${me.id}`, tag: `chat-${me.id}` }, me.id);
       return send(res, 200, { message: shapeMsg(q('SELECT * FROM messages WHERE id = ?').get(r.lastInsertRowid)) });
     }
@@ -687,7 +743,7 @@ async function api(req, res, url) {
   if (dm && M === 'DELETE') {
     const m = q('SELECT * FROM messages WHERE id = ? AND sender = ?').get(Number(dm[1]), me.id);
     if (!m) throw fail(404, 'Сообщение не найдено');
-    q('DELETE FROM messages WHERE id = ?').run(m.id);
+    q('DELETE FROM messages WHERE id = ?').run(m.id); dropFlame(m.sender, m.recipient);
     if (m.media && !q('SELECT 1 FROM messages WHERE media = ?').get(m.media) && !q('SELECT 1 FROM posts WHERE media = ?').get(m.media)) {
       q('DELETE FROM media WHERE id = ?').run(m.media); await unlink(join(MEDIA, m.media)).catch(() => {});
     }
@@ -707,22 +763,36 @@ function shapeMsg(m) {
 
 /* ---------------- static ---------------- */
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json',
-  '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.md': 'text/plain; charset=utf-8' };
+  '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.md': 'text/plain; charset=utf-8',
+  '.woff2': 'font/woff2' };
+// Статика: держим в памяти, отдаём с ETag — повторный заход получает 304 без тела
+const staticCache = new Map();
+async function staticFile(file) {
+  const st = await stat(file); if (!st.isFile()) throw 0;
+  const hit = staticCache.get(file);
+  if (hit && hit.mtime === st.mtimeMs) return hit;
+  const buf = await readFile(file), etag = '"' + createHash('sha1').update(buf).digest('base64url').slice(0, 20) + '"';
+  const v = { buf, etag, mtime: st.mtimeMs }; staticCache.set(file, v); return v;
+}
 async function serveStatic(req, res, url) {
   let p; try { p = decodeURIComponent(url.pathname); } catch { res.writeHead(400); return res.end(); }
   if (p.endsWith('/')) p += 'index.html';
-  const file = normalize(join(ROOT, p));
+  let file = normalize(join(ROOT, p));
   if (!file.startsWith(ROOT)) { res.writeHead(403); return res.end(); }
-  try {
-    const st = await stat(file); if (!st.isFile()) throw 0;
-    const ext = extname(file);
-    res.writeHead(200, { 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=300' });
-    res.end(await readFile(file));
-  } catch {
+  let f;
+  try { f = await staticFile(file); }
+  catch {
     // SPA: неизвестные пути без расширения → index.html
-    if (!extname(p)) { res.writeHead(200, { 'Content-Type': TYPES['.html'], 'Cache-Control': 'no-cache' }); return res.end(await readFile(join(ROOT, 'index.html'))); }
-    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('Не найдено');
+    if (extname(p)) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('Не найдено'); }
+    file = join(ROOT, 'index.html'); f = await staticFile(file);
   }
+  const ext = extname(file);
+  // шрифты и иконки не меняются — кэш на год; код и страница — всегда сверяем по ETag (обновления приходят сразу)
+  const cache = /\.(woff2|png|ico)$/.test(file) ? 'public, max-age=31536000, immutable' : 'no-cache';
+  const headers = { 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Cache-Control': cache, ETag: f.etag };
+  if (req.headers['if-none-match'] === f.etag) { res.writeHead(304, headers); return res.end(); }
+  res.writeHead(200, { ...headers, 'Content-Length': f.buf.length });
+  res.end(req.method === 'HEAD' ? undefined : f.buf);
 }
 
 http.createServer(async (req, res) => {
