@@ -55,13 +55,23 @@ async function readBody(req, max) {
   for await (const c of req) { size += c.length; if (size > max) throw fail(413, 'Слишком большой файл'); chunks.push(c); }
   return Buffer.concat(chunks);
 }
-const json = async (req, max = 64_000) => { try { return JSON.parse((await readBody(req, max)).toString('utf8') || '{}'); } catch (e) { if (e.public) throw e; throw fail(400, 'Неверный запрос'); } };
+const json = async (req, max = 64_000) => { try { return JSON.parse((await readBody(req, max)).toString('utf8') || '{}'); } catch (e) { if (e.code === 413) throw fail(413, 'Слишком большой запрос'); if (e.public) throw e; throw fail(400, 'Неверный запрос'); } };
 const buckets = new Map();
 function rate(key, max, windowMs) {
   const t = now(), a = (buckets.get(key) || []).filter(x => t - x < windowMs); a.push(t); buckets.set(key, a);
   if (a.length > max) throw fail(429, 'Слишком часто. Подождите немного.');
 }
-const ipOf = req => String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+// За Caddy верим только последнему адресу в X-Forwarded-For (его дописывает сам Caddy); первый клиент может подделать.
+const ipOf = req => {
+  const remote = String(req.socket.remoteAddress || '');
+  if (!/^(::ffff:)?127\.0\.0\.1$|^::1$/.test(remote)) return remote;
+  const xff = String(req.headers['x-forwarded-for'] || '').split(',').map(x => x.trim()).filter(Boolean);
+  return xff[xff.length - 1] || remote;
+};
+setInterval(() => { const t = now(); for (const [k, a] of buckets) if (!a.length || t - a[a.length - 1] > 3_600_000) buckets.delete(k); }, 600_000).unref();
+// общий дневной потолок запросов к нейросети — защита баланса ProxyAPI
+const AI_DAILY = Number(process.env.AI_DAILY_LIMIT || 1500);
+let aiDay = '', aiCount = 0;
 const sha = s => createHash('sha256').update(s).digest('hex');
 
 function hashPass(p) { const salt = randomBytes(16); return 'scrypt$' + salt.toString('hex') + '$' + scryptSync(p, salt, 64).toString('hex'); }
@@ -160,6 +170,9 @@ function clean(j) {
 async function analyze(req, res) {
   if (!KEY) throw fail(500, 'Сервер не настроен: нет ключа нейросети');
   rate('ai:' + ipOf(req), LIMIT, 600_000);
+  const me = userOf(req); if (me) rate('aiu:' + me.id, LIMIT, 600_000);
+  const d = new Date().toISOString().slice(0, 10); if (d !== aiDay) { aiDay = d; aiCount = 0; }
+  if (++aiCount > AI_DAILY) { console.error('AI daily limit reached'); throw fail(503, 'Сегодня лимит распознаваний исчерпан. Попробуйте завтра.'); }
   const body = await json(req, 4_000_000);
   const image = String(body.image || '');
   if (!/^data:image\/(jpeg|png|webp);base64,/.test(image) || image.length > 3_000_000) throw fail(400, 'Нужна фотография JPEG/PNG до ~2 МБ');
@@ -303,6 +316,7 @@ async function api(req, res, url) {
     startSession(res, u.id);
     return send(res, 200, { me: pub(u) });
   }
+  if (p === '/api/me' && M === 'GET' && !userOf(req)) return send(res, 200, { me: null });
   if (p === '/api/auth/logout' && M === 'POST') {
     const t = cookieToken(req); if (t) q('DELETE FROM sessions WHERE token = ?').run(sha(t));
     return send(res, 200, { ok: true }, { 'Set-Cookie': `hf=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${SECURE ? '; Secure' : ''}` });
@@ -338,8 +352,9 @@ async function api(req, res, url) {
   }
   if (p === '/api/sync' && M === 'PUT') {
     rate('sync:' + me.id, 120, 600_000);
-    const raw = (await readBody(req, 6_000_000)).toString('utf8');
-    try { JSON.parse(raw); } catch { throw fail(400, 'Неверные данные'); }
+    const raw = (await readBody(req, 8_000_000)).toString('utf8');
+    let parsed; try { parsed = JSON.parse(raw); } catch { throw fail(400, 'Неверные данные'); }
+    if (!parsed || typeof parsed !== 'object' || !parsed.days) throw fail(400, 'Неверные данные');
     q('UPDATE users SET sync = ?, sync_at = ? WHERE id = ?').run(raw, now(), me.id);
     return send(res, 200, { ok: true, at: now() });
   }
@@ -391,6 +406,9 @@ async function api(req, res, url) {
       if (post.user_id !== me.id) throw fail(403, 'Можно удалить только свою публикацию');
       q('DELETE FROM likes WHERE post_id = ?').run(post.id); q('DELETE FROM comments WHERE post_id = ?').run(post.id);
       q('DELETE FROM posts WHERE id = ?').run(post.id);
+      if (post.media && !q('SELECT 1 FROM messages WHERE media = ?').get(post.media) && !q('SELECT 1 FROM posts WHERE media = ?').get(post.media) && !q('SELECT 1 FROM users WHERE avatar = ?').get(post.media)) {
+        q('DELETE FROM media WHERE id = ?').run(post.media); await unlink(join(MEDIA, post.media)).catch(() => {});
+      }
       return send(res, 200, { ok: true });
     }
     if (pm[2] === '/like') {
@@ -520,7 +538,7 @@ function shapeMsg(m) {
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json',
   '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.md': 'text/plain; charset=utf-8' };
 async function serveStatic(req, res, url) {
-  let p = decodeURIComponent(url.pathname);
+  let p; try { p = decodeURIComponent(url.pathname); } catch { res.writeHead(400); return res.end(); }
   if (p.endsWith('/')) p += 'index.html';
   const file = normalize(join(ROOT, p));
   if (!file.startsWith(ROOT)) { res.writeHead(403); return res.end(); }

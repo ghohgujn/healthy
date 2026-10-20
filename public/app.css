@@ -767,3 +767,37 @@ img { display: block; max-width: 100%; }
 .share-me[aria-pressed="true"] .sf-plus { transform: scale(0); }
 .share-nofr { align-self: center; max-width: 200px; font-size: var(--text-xs); }
 @media (prefers-reduced-motion: reduce) { .fc-photo.burst .fc-burst, .fc-btn.like.on svg { animation: none; } }
+
+/* ===== v8: QA-фиксы ===== */
+/* тач-зоны ≥ 44px */
+.chip, .streak-chip { min-height: 44px; }
+.stepper button { width: 44px; height: 44px; }
+.stepper input { min-height: 44px; }
+.fc-del { flex: none; }
+.cmt { grid-template-columns: 44px minmax(0, 1fr); }
+.cmt-ava { width: 44px; height: 44px; display: grid; place-items: center; }
+.toast button { min-height: 44px; padding: 0 4px; }
+/* длинные слова (имена, логины) не ломают вёрстку */
+.onb-h, .uv-name, .fc-author b, .cmt p, .fc-cap, .plan-warn, .h1 { overflow-wrap: anywhere; }
+.name-input { text-overflow: ellipsis; }
+.chat, .uview { grid-template-columns: minmax(0, 1fr); }
+.chat-who, .uv-top .chat-name { min-width: 0; }
+.chat-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-author { min-width: 0; } .fc-author span:last-child { min-width: 0; }
+/* фото в карточке поста внутри шторки — ровно по ширине шторки */
+.post-body { padding-top: 0; }
+.fcard.in-sheet { margin: 0 calc(-1 * var(--space-lg)); width: auto; }
+.fcard.in-sheet .fc-photo { max-height: 60dvh; }
+/* уведомление над открытой шторкой — сверху, чтобы не закрывало поле ввода */
+.toast.top { bottom: auto; top: calc(env(safe-area-inset-top, 0px) + 12px); transform: translate(-50%, -12px); }
+.toast.top.show { transform: translate(-50%, 0); }
+/* маленькие экраны (iPhone SE, 320–360px) */
+@media (max-width: 360px) {
+  .tabbar { grid-template-columns: 1fr 1fr 64px 1fr 1fr; padding-inline: 4px; }
+  .tab-gap { width: 64px; }
+  .tabbtn { font-size: 10px; letter-spacing: -0.01em; }
+  .glasses { gap: 2px; }
+}
+.plan-warn + .plan-warn { margin-top: 6px; }
+#profParams > .streak-card { margin-bottom: var(--space-sm); }
+.post-sheet { grid-template-columns: minmax(0, 1fr); } .post-body { min-width: 0; }

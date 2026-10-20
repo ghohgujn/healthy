@@ -6,7 +6,7 @@
   const DEFAULTS = { goal: 2000, p: 120, f: 65, c: 230, glass: 250, waterGoal: 2000, model: 'fast' };
   const CFG = window.KBJU_CONFIG || {};
   const PROFILE0 = { name: '', avatar: '', sex: 'm', age: 25, height: 175, weight: 75, target: 0, bodyFat: 0, activity: 'light', goal: 'lose_healthy', configured: false };
-  let db = { settings: { ...DEFAULTS }, days: {}, profile: { ...PROFILE0 }, weights: [] };
+  let db = { settings: { ...DEFAULTS }, days: {}, profile: { ...PROFILE0 }, weights: [], tomb: [], owner: null };
 
   function validDb(d) {
     if (!d || typeof d !== 'object' || !d.days || typeof d.days !== 'object') return null;
@@ -34,7 +34,8 @@
     const weights = (Array.isArray(d.weights) ? d.weights : []).filter(w => w && /^\d{4}-\d{2}-\d{2}$/.test(w.date) && +w.kg > 20 && +w.kg < 400).map(w => ({ date: w.date, kg: +w.kg }));
     const health = {};
     if (d.health && typeof d.health === 'object') for (const [k, v] of Object.entries(d.health)) if (/^\d{4}-\d{2}-\d{2}$/.test(k) && v) health[k] = { steps: +v.steps || 0, active_kcal: +v.active_kcal || 0 };
-    return { settings: { ...DEFAULTS, ...(d.settings && typeof d.settings === 'object' ? d.settings : {}) }, days, profile, weights, health };
+    const tomb = (Array.isArray(d.tomb) ? d.tomb : []).map(String).slice(-1000);
+    return { settings: { ...DEFAULTS, ...(d.settings && typeof d.settings === 'object' ? d.settings : {}) }, days, profile, weights, health, tomb, owner: d.owner || null };
   }
   try { const raw = localStorage.getItem(KEY); if (raw) db = validDb(JSON.parse(raw)) || db; } catch { /* in-memory */ }
 
@@ -55,11 +56,30 @@
   const keyOf = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const today = () => keyOf(new Date());
   const day = k => { const d = (db.days[k] ||= { meals: [], water: 0 }); d.acts ||= []; d.steps ||= 0; return d; };
-  const actKcal = k => { const d = day(k), w = db.profile.weight || 75, h = (db.health || {})[k] || {};
-    const manual = d.acts.reduce((a, x) => a + HFCalc.activityKcal(x.type, x.level, x.min, w), 0) + HFCalc.stepsKcal(d.steps || h.steps || 0, w);
-    // активные калории из «Здоровья» уже включают тренировки с часов — берём большее, чтобы не считать дважды
-    return Math.max(manual, Math.round(h.active_kcal || 0)); };
+  const actKcal = k => { const d = day(k), h = (db.health || {})[k] || {};
+    return HFCalc.dayBonus(db.profile, d.acts, d.steps || h.steps || 0, h.active_kcal || 0).kcal; };
   const r0 = n => Math.round(n);
+  // «надгробия» удалённых записей, чтобы синхронизация с другим устройством не воскрешала их
+  const bury = id => { (db.tomb ||= []).push(String(id)); if (db.tomb.length > 1000) db.tomb.splice(0, db.tomb.length - 1000); };
+  const unbury = id => { db.tomb = (db.tomb || []).filter(x => x !== String(id)); };
+  // Слияние дневников двух устройств: записи объединяются по id, удалённые не возвращаются, вода и шаги — максимум.
+  function mergeDb(local, remote) {
+    const out = validDb(JSON.parse(JSON.stringify(local))), rem = validDb(remote); if (!rem) return out;
+    const tomb = new Set([...(out.tomb || []), ...(rem.tomb || [])]);
+    const have = new Set(); for (const d of Object.values(out.days)) { d.meals.forEach(m => have.add(m.id)); d.acts.forEach(a => have.add(a.id)); }
+    for (const [k, rd] of Object.entries(rem.days)) {
+      const d = (out.days[k] ||= { meals: [], water: 0, acts: [], steps: 0 });
+      for (const m of rd.meals) if (!have.has(m.id) && !tomb.has(m.id)) { d.meals.push(m); have.add(m.id); }
+      for (const a of rd.acts) if (!have.has(a.id) && !tomb.has(a.id)) { d.acts.push(a); have.add(a.id); }
+      d.water = Math.max(d.water, rd.water); d.steps = Math.max(d.steps || 0, rd.steps || 0);
+    }
+    for (const d of Object.values(out.days)) { d.meals = d.meals.filter(m => !tomb.has(m.id)); d.acts = d.acts.filter(a => !tomb.has(a.id)); }
+    const wd = new Set(out.weights.map(w => w.date)); for (const w of rem.weights) if (!wd.has(w.date)) out.weights.push(w);
+    out.weights.sort((a, b) => a.date.localeCompare(b.date));
+    if (!out.profile.configured && rem.profile.configured) { out.profile = rem.profile; Object.assign(out.settings, rem.settings); }
+    out.tomb = [...tomb].slice(-1000);
+    return out;
+  }
   const API = (CFG.apiBase || '').replace(/\/$/, '') + '/api/analyze';
   let selected = today();
   let lastToday = selected;
@@ -110,7 +130,7 @@
     $('#calTitle').textContent = left < 0 ? 'ккал сверх цели' : 'ккал осталось';
     $('#calEaten').textContent = `съедено ${r0(t.kcal)} из ${goal}`;
     setRing($('#calRing'), t.kcal / goal);
-    for (const [m, goal] of [['p', s.p], ['f', s.f], ['c', s.c]]) {
+    for (const [m, goal] of [['p', s.p], ['f', s.f], ['c', s.c + Math.round(bonus / 4)]]) {
       const card = document.querySelector(`.macro[data-m="${m}"]`);
       card.querySelector('.macro-val').innerHTML = `<b>${r0(t[m])}</b>/${goal} г`;
       setRing(card.querySelector('.ring-fg'), goal ? t[m] / goal : 0);
@@ -126,9 +146,9 @@
   }
   function renderWater() {
     const s = db.settings, ml = day(selected).water;
-    const count = Math.min(12, Math.max(8, Math.ceil(s.waterGoal / s.glass)));
+    const count = Math.min(16, Math.max(6, Math.ceil(s.waterGoal / s.glass)));
     const filled = Math.floor(ml / s.glass + 1e-6), shown = Math.min(filled, count);
-    $('#waterText').textContent = `${ml} из ${s.waterGoal} мл · стакан ${s.glass} мл`;
+    $('#waterText').textContent = `${ml} / ${s.waterGoal} мл · стакан ${s.glass}`;
     $('#waterMinus').disabled = ml <= 0;
     $('#waterBarFill').style.transform = `scaleX(${Math.min(1, ml / s.waterGoal)})`;
     const box = $('#glasses'); box.innerHTML = '';
@@ -180,7 +200,8 @@
   const stack = [];
   function setInert() {
     const top = stack[stack.length - 1]?.el;
-    for (const el of [document.querySelector('.app'), ...document.querySelectorAll('.sheet-wrap, .cam, .chat, .uview')]) el.inert = !!top && el !== top;
+    const onb = document.querySelector('#onb'), onbOpen = onb && !onb.hidden;
+    for (const el of [document.querySelector('.app'), document.querySelector('.tabbar'), ...document.querySelectorAll('.sheet-wrap, .cam, .chat, .uview')]) if (el) el.inert = (!!top && el !== top && !el.contains(top)) || (onbOpen && !top);
   }
   function openDialog(el, focusSel) {
     stack.push({ el, back: document.activeElement });
@@ -447,7 +468,7 @@
     closeDialog(sheet); render();
     if (!ok) { toast(STORAGE_FULL, null, null, 7000); return; }
     toast(`Добавлено · ${r0(mealTotals(meal.items).kcal)} ккал`, 'Отменить', () => {
-      day(target).meals = day(target).meals.filter(x => x.id !== meal.id); save(); render();
+      day(target).meals = day(target).meals.filter(x => x.id !== meal.id); bury(meal.id); save(); render();
     });
   };
 
@@ -459,8 +480,8 @@
   }
   $('#deleteMeal').onclick = () => {
     const d = day(draft.day), idx = d.meals.findIndex(x => x.id === draft.id); if (idx < 0) return;
-    const [removed] = d.meals.splice(idx, 1); save(); closeDialog(sheet); render();
-    toast('Приём пищи удалён', 'Вернуть', () => { d.meals.splice(idx, 0, removed); save(); render(); });
+    const [removed] = d.meals.splice(idx, 1); bury(removed.id); save(); closeDialog(sheet); render();
+    toast('Приём пищи удалён', 'Вернуть', () => { d.meals.splice(idx, 0, removed); unbury(removed.id); save(); render(); });
   };
 
   /* ---------- water ---------- */
@@ -511,6 +532,7 @@
     const t = $('#toast'); t.innerHTML = '';
     const s = document.createElement('span'); s.textContent = text; t.appendChild(s);
     if (actionLabel) { const b = document.createElement('button'); b.textContent = actionLabel; b.onclick = () => { action(); t.classList.remove('show'); }; t.appendChild(b); }
+    t.classList.toggle('top', stack.length > 0 || !document.querySelector('#onb')?.hidden);
     t.classList.add('show'); clearTimeout(toastTimer);
     toastTimer = setTimeout(() => t.classList.remove('show'), ms || (actionLabel ? 5000 : 2200));
   }
@@ -592,7 +614,7 @@
       grid.appendChild(b);
     }
     $('#calStats').innerHTML = `<div><b>${monthDays}</b><span>${plural(monthDays, 'день', 'дня', 'дней')} с тренировкой</span></div>
-      <div><b>${Math.round(monthMin / 60 * 10) / 10}</b><span>часов</span></div><div><b>≈${monthKcal}</b><span>ккал</span></div>`;
+      <div><b>${String(Math.round(monthMin / 60 * 10) / 10).replace('.', ',')}</b><span>${monthMin < 120 && monthMin % 60 === 0 ? plural(monthMin / 60, 'час', 'часа', 'часов') : monthMin === 0 ? 'часов' : 'ч'}</span></div><div><b>≈${monthKcal}</b><span>ккал</span></div>`;
     const dd = new Date(actDay + 'T12:00');
     $('#dayActTitle').textContent = actDay === t ? 'Сегодня' : dd.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }).replace(/^./, c => c.toUpperCase());
     const list = $('#actList'); list.innerHTML = '';
@@ -665,8 +687,8 @@
   };
   $('#actDelete').onclick = () => {
     const d = day(actDay), i = d.acts.findIndex(x => x.id === actDraft.id); if (i < 0) return;
-    const [rm] = d.acts.splice(i, 1); save(); closeDialog(actSheet); render();
-    toast('Тренировка удалена', 'Вернуть', () => { d.acts.splice(i, 0, rm); save(); render(); });
+    const [rm] = d.acts.splice(i, 1); bury(rm.id); save(); closeDialog(actSheet); render();
+    toast('Тренировка удалена', 'Вернуть', () => { d.acts.splice(i, 0, rm); unbury(rm.id); save(); render(); });
   };
   $('#addActBtn').onclick = () => openAct(null);
 
@@ -730,12 +752,21 @@
       <div class="plan-legend"><span><b>${t.p} г</b>белки</span><span><b>${t.f} г</b>жиры</span><span><b>${t.c} г</b>углеводы</span></div>
       <div class="plan-meta">
         <div><b>${t.bmr}</b><span>базовый обмен</span></div><div><b>${t.tdee}</b><span>расход без тренировок</span></div>
-        <div><b>${t.weeklyKg > 0 ? '+' : ''}${t.weeklyKg} кг</b><span>в неделю</span></div><div><b>${(t.water / 1000).toFixed(2).replace('.', ',')} л</b><span>воды</span></div>
+        <div><b>${fmtKg(t.weeklyKg)} кг</b><span>в неделю</span></div><div><b>${(t.water / 1000).toFixed(1).replace('.', ',')} л</b><span>воды</span></div>
         ${eta}<div><b>${t.bmi}</b><span>ИМТ</span></div>
       </div>
+      ${planNotes(t, p)}
       ${t.safety.reasons.length ? `<p class="plan-warn">Без дефицита: ${t.safety.reasons.join(', ')}. Посоветуйтесь с врачом.</p>` : ''}
-      <p class="sub small">Формула ${p.bodyFat ? 'Каннингема (по % жира)' : 'Миффлина — Сан Жеора'}. Тренировки из календаря добавляются к норме в свой день. Через 2–3 недели сверьте с трендом веса.</p>`;
+      <p class="sub small">Формула ${p.bodyFat ? 'Каннингема (по % жира)' : 'Миффлина — Сан Жеора'}. Тренировки и шаги сверх обычных добавляются к норме в свой день. Через 2–3 недели сверьте с трендом веса.</p>`;
   }
+  function fmtKg(v) { return (v > 0 ? '+' : v < 0 ? '−' : '') + String(Math.abs(v)).replace('.', ','); }
+  function planNotes(t, p) {
+    const n = [];
+    if (t.targetConflict) n.push(`Цель ${p.target} кг ${p.target > p.weight ? 'выше' : 'ниже'} текущего веса — ${p.target > p.weight ? 'выберите «Набор мышц»' : 'выберите снижение'} или поправьте цель.`);
+    if (t.limited) n.push('Темп ограничен безопасным минимумом калорий — реальная скорость ниже, чем у выбранной цели.');
+    return n.map(x => `<p class="plan-warn">${x}</p>`).join('');
+  }
+  window.HFPlanNotes = planNotes; window.HFfmtKg = fmtKg;
   function applyProfile() {
     const p = db.profile, t = HFCalc.targets(p);
     p.configured = true;
@@ -817,7 +848,7 @@
   }
 
   $('#shareMeal').onclick = () => window.HFSocial?.shareMeal({ name: $('#mealName').textContent, thumb: draft.thumb, items: draft.items.map(i => ({ ...i })), totals: mealTotals(draft.items) });
-  window.HF = { get db() { return db; }, set db(v) { db = v; }, validDb, save, day, mealTotals, openDialog, closeDialog, toast, render, streakInfo, keyOf, today, showTab, loadImage, paintAvatar, actKcal };
+  window.HF = { setInert, get db() { return db; }, set db(v) { db = v; }, validDb, mergeDb, save, day, mealTotals, openDialog, closeDialog, toast, render, streakInfo, keyOf, today, showTab, loadImage, paintAvatar, actKcal };
 
   /* ---------- day rollover ---------- */
   function rollDay() {

@@ -14,12 +14,12 @@
   function open(force) {
     step = 0; mode = 'reg';
     acc = { name: P().name || '', username: '', password: '' };
-    el.hidden = false; document.body.style.overflow = 'hidden';
+    el.hidden = false; document.body.style.overflow = 'hidden'; HF.setInert();
     render();
     if (force) $('#onbSkip').hidden = false;
   }
   function close() {
-    el.hidden = true; document.body.style.overflow = '';
+    el.hidden = true; document.body.style.overflow = ''; HF.setInert();
     try { localStorage.setItem(KEY, '1'); } catch {}
     HF.render();
   }
@@ -108,7 +108,7 @@
 
     if (name === 'activity') {
       next.textContent = 'Рассчитать норму';
-      body.innerHTML = `<h1 class="onb-h" id="onbTitle">Обычная активность</h1><p class="onb-p">Без учёта тренировок — их вы будете отмечать в календаре, и калории добавятся в свой день.</p>
+      body.innerHTML = `<h1 class="onb-h" id="onbTitle">Обычная активность</h1><p class="onb-p">Только быт и работа, без тренировок. Тренировки и лишние шаги добавятся к норме в свой день.</p>
         <div class="onb-goals" role="radiogroup" aria-label="Активность">${Object.entries(HFCalc.ACTIVITY).map(([k, a]) =>
           `<button class="onb-goal" role="radio" data-act="${k}" aria-checked="${P().activity === k}"><b>${a.label}</b><small>${a.hint}</small></button>`).join('')}</div>`;
       body.querySelectorAll('[data-act]').forEach(b => b.onclick = () => {
@@ -127,11 +127,12 @@
           <div class="plan-bar" aria-hidden="true"><i style="width:${pct(t.p * 4)}%;background:var(--color-protein)"></i><i style="width:${pct(t.f * 9)}%;background:var(--color-fat)"></i><i style="width:${pct(t.c * 4)}%;background:var(--color-carb)"></i></div>
           <div class="plan-legend"><span><b>${t.p} г</b>белки</span><span><b>${t.f} г</b>жиры</span><span><b>${t.c} г</b>углеводы</span></div>
           <div class="plan-meta">
-            <div><b>${t.weeklyKg > 0 ? '+' : ''}${t.weeklyKg} кг</b><span>в неделю</span></div>
+            <div><b>${window.HFfmtKg(t.weeklyKg)} кг</b><span>в неделю</span></div>
             <div><b>${(t.water / 1000).toFixed(1).replace('.', ',')} л</b><span>воды в день</span></div>
             ${t.weeks ? `<div><b>${t.weeksRange[0]}–${t.weeksRange[1]} нед.</b><span>до ${P().target} кг</span></div>` : ''}
             <div><b>${t.bmi}</b><span>ИМТ</span></div>
           </div>
+          ${window.HFPlanNotes(t, P())}
           ${t.safety.reasons.length ? `<p class="plan-warn">Дефицит не рекомендуется: ${t.safety.reasons.join(', ')}. Поставили поддержание.</p>` : ''}
         </div>
         <p class="onb-p small">Через 2–3 недели сверим с трендом веса и подстроим норму.</p>`;

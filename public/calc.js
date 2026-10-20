@@ -5,10 +5,11 @@
   'use strict';
 
   const ACTIVITY = {
-    sedentary: { k: 1.2,   label: 'Сидячий', hint: 'Офис, почти без прогулок' },
-    light:     { k: 1.375, label: 'Лёгкий', hint: 'Прогулки, 1–3 тренировки в неделю' },
-    moderate:  { k: 1.55,  label: 'Средний', hint: '3–5 тренировок или 8–10 тыс. шагов' },
-    high:      { k: 1.725, label: 'Высокий', hint: '6–7 тренировок или физическая работа' },
+    // Только бытовая активность (без тренировок): тренировки и шаги сверх базы добавляются в свой день.
+    sedentary: { k: 1.2,   steps: 4000,  label: 'Сидячий', hint: 'Офис, машина, до 4 тыс. шагов' },
+    light:     { k: 1.375, steps: 7000,  label: 'Лёгкий',  hint: 'Немного пешком, 5–8 тыс. шагов' },
+    moderate:  { k: 1.55,  steps: 10000, label: 'Средний', hint: 'Много на ногах: 8–12 тыс. шагов' },
+    high:      { k: 1.725, steps: 13000, label: 'Высокий', hint: 'Физическая работа весь день' },
   };
 
   // rate — доля массы тела в неделю; protein — г/кг опорного веса; capShare — максимум дефицита/профицита от TDEE
@@ -49,8 +50,11 @@
     let delta = (g.rate * p.weight * KCAL_PER_KG) / 7;
     if (g.rate < 0) delta = -Math.min(-delta, g.capShare * tdee, 1000);
     if (g.rate > 0) delta = Math.min(delta, g.capShare * tdee, 500);
-    const floor = Math.max(b, p.sex === 'm' ? 1500 : 1200);
+    // нижняя граница — общепринятый минимум (AHA/ACC/TOS 2013), не BMR: иначе людям с большим весом почти не даётся дефицит
+    const floor = p.sex === 'm' ? 1500 : 1200;
+    const wanted = (g.rate * p.weight * KCAL_PER_KG) / 7;
     let kcal = Math.max(tdee + delta, g.rate < 0 ? floor : 0);
+    const limited = g.rate !== 0 && Math.abs(kcal - tdee) < Math.abs(wanted) * 0.8;
 
     // опорный вес для белка/жира: при ИМТ > 30 считаем от веса при ИМТ 27
     const h2 = (p.height / 100) ** 2;
@@ -61,7 +65,7 @@
     let carbs = (kcal - protein * 4 - fat * 9) / 4;
     if (carbs < 50) { fat = Math.max((0.2 * kcal) / 9, fat - (50 - carbs) * 4 / 9); carbs = (kcal - protein * 4 - fat * 9) / 4; }
 
-    const water = round(Math.max(p.sex === 'm' ? 2500 : 2000, 33 * p.weight), 250);
+    const water = Math.min(3500, round(Math.max(p.sex === 'm' ? 2500 : 2000, 33 * refW), 250));
     const weeklyKg = ((kcal - tdee) * 7) / KCAL_PER_KG;
     let weeks = null;
     if (p.target && Math.abs(p.target - p.weight) > 0.5 && Math.sign(p.target - p.weight) === Math.sign(weeklyKg) && weeklyKg) {
@@ -71,7 +75,8 @@
       goal: goalKey, bmr: round(b), tdee: round(tdee), kcal: round(kcal, 10),
       p: round(protein), f: round(fat), c: round(Math.max(0, carbs)), fiber: round(kcal / 1000 * 14),
       water, weeklyKg: Math.round(weeklyKg * 100) / 100, weeks: weeks && Math.round(weeks),
-      weeksRange: weeks && [Math.round(weeks * 0.8), Math.round(weeks * 1.2)],
+      weeksRange: weeks && [Math.round(weeks * 0.8), Math.round(weeks * 1.2)], limited,
+      targetConflict: Boolean(p.target && Math.abs(p.target - p.weight) > 0.5 && g.rate !== 0 && Math.sign(p.target - p.weight) !== Math.sign(g.rate)),
       bmi: Math.round(s.bmi * 10) / 10, safety: s,
     };
   }
@@ -102,6 +107,17 @@
     return Math.max(0, Math.round((met - 1) * weight * (minutes / 60)));
   }
 
+  // Бонус к дневной норме: тренировки целиком (уровень активности их не включает) + шаги сверх базы уровня.
+  // Если есть активные калории из «Здоровья»/браслета, из них вычитаем бытовую активность, уже заложенную в коэффициент.
+  function dayBonus(p, acts, steps, activeKcal) {
+    const w = p.weight || 75, lvl = ACTIVITY[p.activity] || ACTIVITY.light;
+    const workouts = (acts || []).reduce((a, x) => a + activityKcal(x.type, x.level, x.min, w), 0);
+    const manual = workouts + stepsKcal(Math.max(0, (steps || 0) - lvl.steps), w);
+    const assumed = (lvl.k - 1.1) * bmr(p);
+    const watch = activeKcal ? Math.max(0, Math.round(activeKcal - assumed)) : 0;
+    return { kcal: Math.max(manual, watch), workouts, manual, watch, source: watch > manual ? 'health' : 'manual' };
+  }
+
   // EWMA-тренд веса (α=0.1, как у сглаженных «трендовых» весов)
   function weightTrend(entries, alpha = 0.1) {
     const sorted = entries.slice().sort((a, b) => a.date.localeCompare(b.date));
@@ -109,6 +125,6 @@
     return sorted.map(e => { t = t == null ? e.kg : t + alpha * (e.kg - t); return { date: e.date, kg: e.kg, trend: Math.round(t * 10) / 10 }; });
   }
 
-  const api = { ACTIVITY, GOALS, ACTIVITIES, INTENSITY, bmr, targets, safety, stepsKcal, activityKcal, weightTrend };
+  const api = { ACTIVITY, GOALS, ACTIVITIES, INTENSITY, bmr, targets, safety, stepsKcal, activityKcal, weightTrend, dayBonus };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.HFCalc = api;
 })(typeof window !== 'undefined' ? window : globalThis);

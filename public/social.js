@@ -78,7 +78,7 @@
         const r = await api(mode === 'reg' ? '/api/auth/register' : '/api/auth/login', { method: 'POST',
           body: { name: f.get('name'), username: f.get('username'), password: f.get('password') } });
         me = r.me; HF.toast(mode === 'reg' ? `Добро пожаловать, ${me.name}!` : 'Вы вошли');
-        if (mode === 'reg') await pushProfile(); else await restoreIfEmpty(true);
+        if (mode === 'reg') { claimDiary(); await pushProfile(); } else await restoreIfEmpty();
         boot();
       } catch (err) { $('#authErr').textContent = err.message; }
       finally { btn.disabled = false; }
@@ -140,18 +140,34 @@
   let syncT;
   function onSave() { if (!me || DEMO) return; clearTimeout(syncT); syncT = setTimeout(syncUp, 5000); schedulePush(); }
   async function syncUp() {
-    try { await api('/api/sync', { method: 'PUT', body: JSON.stringify(HF.db) }); const el = $('#syncInfo'); if (el) el.textContent = `Копия сохранена ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`; } catch {}
-  }
-  async function restoreIfEmpty(ask) {
-    const local = Object.values(HF.db.days).reduce((a, d) => a + (d.meals?.length || 0), 0);
+    const el = $('#syncInfo');
     try {
-      const r = await api('/api/sync'); if (!r.data) { if (local) syncUp(); return; }
-      const remoteMeals = Object.values(r.data.days || {}).reduce((a, d) => a + (d.meals?.length || 0), 0);
-      if (!local || (ask && remoteMeals > local)) {
-        const next = HF.validDb(r.data); if (!next) return;
-        const prev = HF.db; HF.db = next; HF.save(); HF.render();
-        HF.toast(`Дневник восстановлен из облака: ${remoteMeals} приёмов`, local ? 'Отменить' : null, () => { HF.db = prev; HF.save(); HF.render(); }, 8000);
-      }
+      // фото старше 30 дней в облако не шлём — иначе за пару месяцев копия упирается в лимит
+      const cut = Date.now() - 30 * 864e5, copy = { ...HF.db, owner: me.id, days: {} };
+      for (const [k, d] of Object.entries(HF.db.days)) copy.days[k] = { ...d, meals: d.meals.map(m => m.time < cut ? { ...m, thumb: '' } : m) };
+      await api('/api/sync', { method: 'PUT', body: JSON.stringify(copy) });
+      if (el) el.textContent = `Копия сохранена ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+    } catch (e) { if (el) el.textContent = `Копия не сохранилась: ${e.message}`; }
+  }
+  // Новый аккаунт на телефоне, где был дневник другого аккаунта, — начинаем с чистого дневника.
+  function claimDiary() {
+    if (HF.db.owner && HF.db.owner !== me.id) { const name = HF.db.profile.name; HF.db = HF.validDb({ days: {}, profile: { name } }); HF.render(); }
+    HF.db.owner = me.id; HF.save();
+  }
+  // При входе: если на телефоне дневник другого аккаунта — заменяем облачным; иначе объединяем записи двух устройств.
+  async function restoreIfEmpty() {
+    try {
+      const r = await api('/api/sync'), local = HF.db;
+      const foreign = local.owner && local.owner !== me.id;
+      if (!r.data) { if (foreign) { HF.db = HF.validDb({ days: {} }); HF.db.owner = me.id; HF.save(); HF.render(); } else { local.owner = me.id; syncUp(); } return; }
+      const prev = local;
+      const next = foreign ? HF.validDb(r.data) : HF.mergeDb(local, r.data); if (!next) return;
+      next.owner = me.id;
+      const count = db => Object.values(db.days).reduce((a, d) => a + d.meals.length, 0);
+      const added = count(next) - (foreign ? 0 : count(local));
+      HF.db = next; HF.save(); HF.render(); syncUp();
+      if (foreign) HF.toast('Загружен дневник этого аккаунта', 'Отменить', () => { HF.db = prev; HF.save(); HF.render(); }, 8000);
+      else if (added > 0) HF.toast(`Из облака добавлено приёмов пищи: ${added}`);
     } catch {}
   }
 
@@ -232,7 +248,7 @@
       const d = document.createElement('div'); d.className = 'req';
       d.innerHTML = `${avaHTML(u)}<span class="req-who"><b>${esc(u.name)}</b><small>@${esc(u.username)}</small></span>
         <button class="btn btn-primary btn-sm" data-a="yes">Принять</button><button class="icon-btn" data-a="no" aria-label="Отклонить"><svg><use href="#i-x"/></svg></button>`;
-      d.querySelector('[data-a=yes]').onclick = async () => { await api(`/api/friends/${u.id}`, { method: 'POST' }).catch(e => HF.toast(e.message)); HF.toast(`${u.name} теперь в друзьях`); refreshSocial(); };
+      d.querySelector('[data-a=yes]').onclick = async () => { try { await api(`/api/friends/${u.id}`, { method: 'POST' }); HF.toast(`${u.name} теперь в друзьях`); } catch (e) { HF.toast(e.message); } refreshSocial(); };
       d.querySelector('[data-a=no]').onclick = async () => { await api(`/api/friends/${u.id}`, { method: 'DELETE' }).catch(() => {}); refreshSocial(); };
       rq.appendChild(d);
     }
@@ -551,7 +567,7 @@
     get me() { return me; },
     async auth(mode, data) {
       const r = await api(mode === 'reg' ? '/api/auth/register' : '/api/auth/login', { method: 'POST', body: data });
-      me = r.me; if (mode === 'reg') await pushProfile(); else await restoreIfEmpty(true);
+      me = r.me; if (mode === 'reg') { claimDiary(); await pushProfile(); } else await restoreIfEmpty();
       boot(); return me;
     },
   };

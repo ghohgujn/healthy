@@ -141,7 +141,7 @@
       <div id="socialBox" hidden>
         <label class="search"><svg><use href="#i-search"/></svg><input class="input" id="userSearch" type="search" placeholder="Найти по логину или имени" autocomplete="off" enterkeyhint="search"></label>
         <div id="searchResults" hidden></div>
-        <div class="seg chats-seg" id="chatsSeg" role="tablist" aria-label="Раздел"><button role="tab" data-view="chats" aria-checked="true">Чаты</button><button role="tab" data-view="feed" aria-checked="false">Лента</button></div>
+        <div class="seg chats-seg" id="chatsSeg" role="radiogroup" aria-label="Раздел"><button role="radio" data-view="chats" aria-checked="true">Чаты</button><button role="radio" data-view="feed" aria-checked="false">Лента</button></div>
         <div id="feedView" class="feed" hidden></div>
         <div id="socialMain">
           <div class="friend-row" id="friendRow" aria-label="Друзья"></div>
@@ -159,15 +159,15 @@
         <input class="name-input" id="nameInput" maxlength="30" placeholder="Ваше имя" aria-label="Имя" autocomplete="given-name">
         <p class="prof-handle" id="profHandle" hidden></p>
         <div class="prof-stats" id="profStats" hidden></div>
-        <div class="streak-card" id="streakCard"></div>
       </div>
 
-      <div class="seg prof-tabs" id="profTabs" role="tablist" aria-label="Разделы профиля" hidden>
-        <button role="tab" data-ptab="posts" aria-checked="true">Публикации</button>
-        <button role="tab" data-ptab="params" aria-checked="false">Параметры</button>
+      <div class="seg prof-tabs" id="profTabs" role="radiogroup" aria-label="Разделы профиля" hidden>
+        <button role="radio" data-ptab="posts" aria-checked="true">Публикации</button>
+        <button role="radio" data-ptab="params" aria-checked="false">Параметры</button>
       </div>
       <div id="profPosts" class="prof-posts" hidden></div>
       <div id="profParams">
+      <div class="streak-card" id="streakCard"></div>
 
       <div class="card prof-card">
         <h2 class="h2">Цель</h2>
