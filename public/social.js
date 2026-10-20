@@ -223,7 +223,7 @@
     for (const u of friends) {
       const b = document.createElement('button'); b.className = 'friend';
       b.innerHTML = `${avaHTML(u, 'friend-ava')}<span>${esc(u.name)}</span>${u.flame && u.flame.state !== 'none' ? `<span class="mini-flame">${flameBadge(u.flame)}</span>` : ''}`;
-      b.onclick = () => openChat(u);
+      b.onclick = () => window.HFPosts ? window.HFPosts.openUser(u.id) : openChat(u);
       row.appendChild(b);
     }
     const rq = $('#requests');
@@ -262,6 +262,7 @@
           const label = { none: 'Добавить', sent: 'Заявка отправлена', incoming: 'Принять', friends: 'Написать' }[u.state];
           d.innerHTML = `${avaHTML(u)}<span class="req-who"><b>${esc(u.name)}</b><small>@${esc(u.username)}${u.stats?.streak ? ` · серия ${u.stats.streak}` : ''}</small></span>
             <button class="btn ${u.state === 'sent' ? 'btn-ghost' : 'btn-primary'} btn-sm" ${u.state === 'sent' ? 'disabled' : ''}>${label}</button>`;
+          d.querySelector('.req-who').onclick = () => window.HFPosts?.openUser(u.id);
           d.querySelector('button').onclick = async () => {
             if (u.state === 'friends') { openChat(u); return; }
             try { const r = await api(`/api/friends/${u.id}`, { method: 'POST' }); u.state = r.state;
@@ -498,42 +499,55 @@
   $('#recTrash').onclick = () => recFinish(false);
 
   /* ================= share (TikTok-style) ================= */
-  let shareData = null; const picked = new Set();
+  let shareData = null, toProfile = false; const picked = new Set();
+  function updShare() {
+    const n = picked.size + (toProfile ? 1 : 0), btn = $('#shareSend');
+    btn.disabled = !n;
+    btn.textContent = toProfile && !picked.size ? 'Опубликовать' : toProfile ? `Опубликовать и отправить · ${picked.size}` : picked.size > 1 ? `Отправить · ${picked.size}` : 'Отправить';
+  }
   async function shareMeal(d) {
     if (!me) { HF.toast('Войдите, чтобы делиться с друзьями'); HF.showTab('chats'); return; }
-    shareData = d; picked.clear(); $('#shareText').value = '';
+    shareData = d; picked.clear(); toProfile = !!d.thumb; $('#shareText').value = '';
     $('#sharePreview').innerHTML = `${d.thumb ? `<img src="${esc(d.thumb)}" alt="">` : ''}<span><b></b><small>${Math.round(d.totals.kcal)} ккал · Б ${Math.round(d.totals.p)} · Ж ${Math.round(d.totals.f)} · У ${Math.round(d.totals.c)}</small></span>`;
     $('#sharePreview b').textContent = d.name;
     if (!friends.length) await refreshSocial();
     const row = $('#shareFriends'); row.innerHTML = '';
-    if (!friends.length) row.innerHTML = `<p class="sub">Пока нет друзей. Найдите их во вкладке «Друзья».</p>`;
+    const mine = document.createElement('button'); mine.className = 'share-friend share-me'; mine.setAttribute('aria-pressed', String(toProfile));
+    mine.innerHTML = `<span class="sf-ava">${avaHTML(me)}<i class="sf-plus"><svg><use href="#i-plus"/></svg></i><i class="sf-check"><svg><use href="#i-check"/></svg></i></span><span>В мой профиль</span>`;
+    mine.onclick = () => { if (!d.thumb) { HF.toast('Для публикации нужно фото блюда'); return; } toProfile = !toProfile; mine.setAttribute('aria-pressed', String(toProfile)); updShare(); };
+    row.appendChild(mine);
+    if (!friends.length) row.insertAdjacentHTML('beforeend', `<p class="sub share-nofr">Друзей пока нет — найдите их во вкладке «Друзья».</p>`);
     for (const u of friends) {
       const b = document.createElement('button'); b.className = 'share-friend'; b.setAttribute('aria-pressed', 'false');
       b.innerHTML = `<span class="sf-ava">${avaHTML(u)}<i class="sf-check"><svg><use href="#i-check"/></svg></i></span><span>${esc(u.name)}</span>`;
-      b.onclick = () => { picked.has(u.id) ? picked.delete(u.id) : picked.add(u.id); b.setAttribute('aria-pressed', String(picked.has(u.id)));
-        $('#shareSend').disabled = !picked.size; $('#shareSend').textContent = picked.size > 1 ? `Отправить · ${picked.size}` : 'Отправить'; };
+      b.onclick = () => { picked.has(u.id) ? picked.delete(u.id) : picked.add(u.id); b.setAttribute('aria-pressed', String(picked.has(u.id))); updShare(); };
       row.appendChild(b);
     }
-    $('#shareSend').disabled = true; $('#shareSend').textContent = 'Отправить';
+    updShare(); $('#shareText').placeholder = 'Подпись к публикации или сообщение';
     HF.openDialog($('#shareSheet'));
   }
   $('#shareSend').onclick = async () => {
-    const d = shareData; if (!d || !picked.size) return;
+    const d = shareData; if (!d || (!picked.size && !toProfile)) return;
     const btn = $('#shareSend'); btn.disabled = true; btn.textContent = 'Отправляю…';
     try {
       let media;
       if (d.thumb) { const blob = await (await fetch(d.thumb)).blob(); media = (await api('/api/media', { method: 'POST', body: blob })).id; }
       const meta = { title: d.name, kcal: d.totals.kcal, p: d.totals.p, f: d.totals.f, c: d.totals.c, items: d.items.map(i => ({ name: i.name, grams: i.grams })) };
       const body = $('#shareText').value.trim();
+      if (toProfile && media) await api('/api/posts', { method: 'POST', body: { media, caption: body, meta } });
       for (const id of picked) await api(`/api/chats/${id}`, { method: 'POST', body: { kind: 'meal', media, meta, body } });
-      HF.closeDialog($('#shareSheet')); HF.toast(picked.size > 1 ? `Отправлено ${picked.size} друзьям` : 'Отправлено'); refreshSocial();
-    } catch (e) { HF.toast(e.message); btn.disabled = false; btn.textContent = 'Отправить'; }
+      HF.closeDialog($('#shareSheet'));
+      HF.toast(toProfile && picked.size ? `Опубликовано и отправлено ${picked.size}` : toProfile ? 'Опубликовано в профиле' : picked.size > 1 ? `Отправлено ${picked.size} друзьям` : 'Отправлено');
+      refreshSocial(); window.HFPosts?.refresh();
+    } catch (e) { HF.toast(e.message); updShare(); }
   };
 
   /* ================= hooks ================= */
+  $('#chatAva').onclick = $('#chatName').onclick = () => { if (peer) window.HFPosts?.openUser(peer.id); };
   window.HFSocial = {
     onTab(name) { tab = name; if (name === 'chats') { renderAuth(); if (me) { renderInbox(); refreshSocial(); } } if (name === 'profile') { renderAccountCard(); renderHealthCard(); } },
-    onSave, shareMeal, checkName,
+    onSave, shareMeal, checkName, api, avaHTML, esc, flameBadge, openChat, plural, refreshSocial,
+    get friends() { return friends; },
     get me() { return me; },
     async auth(mode, data) {
       const r = await api(mode === 'reg' ? '/api/auth/register' : '/api/auth/login', { method: 'POST', body: data });

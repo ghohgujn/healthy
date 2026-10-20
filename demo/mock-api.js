@@ -44,6 +44,36 @@ window.HFMockApi = (() => {
         st.msgs.push(m); return { message: m };
       }
       if (/^\/api\/messages\//.test(p)) { const id = +p.split('/').pop(); st.msgs = st.msgs.filter(m => m.id !== id); return { ok: true }; }
+
+      // ---- публикации (демо) ----
+      if (!st.posts) {
+        const img = (a, b, e) => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><defs><radialGradient id="g" cx=".5" cy=".45" r=".6"><stop offset="0" stop-color="${a}"/><stop offset="1" stop-color="${b}"/></radialGradient></defs><rect width="400" height="400" fill="#efe6d8"/><circle cx="200" cy="205" r="150" fill="#fff"/><circle cx="200" cy="205" r="122" fill="url(#g)"/><text x="200" y="232" font-size="96" text-anchor="middle">${e}</text></svg>`);
+        const P = (id, uid, ago, e, a, b, title, kcal, pp, f, c, cap, likes, liked) => ({ id, user_id: uid, media: img(a, b, e), caption: cap, meta: { title, kcal, p: pp, f, c }, created: t - ago, likers: new Set(liked ? [1] : []), likesBase: likes });
+        st.posts = [P(1, 2, 2e6, '🥗', '#9bd37a', '#4f9a3a', 'Боул с киноа и лососем', 520, 34, 18, 52, 'После тренировки 💪', 6, true),
+          P(2, 3, 9e6, '🍳', '#ffd36b', '#e69a2e', 'Омлет с овощами', 380, 26, 24, 12, 'Завтрак чемпиона', 3, false),
+          P(3, 2, 6e7, '🍝', '#f6a36b', '#c9572f', 'Паста болоньезе', 690, 32, 22, 88, '', 9, false),
+          P(4, 3, 9e7, '🥣', '#e8d3b0', '#b8945e', 'Овсянка с ягодами', 310, 11, 7, 52, 'Каждое утро', 2, false)];
+        st.comments = [{ id: 1, post_id: 1, user_id: 3, body: 'Выглядит огонь 🔥', created: t - 15e5 }, { id: 2, post_id: 1, user_id: 2, body: 'Спасибо! Рецепт скину в чат', created: t - 12e5 }, { id: 3, post_id: 2, user_id: 2, body: 'Сколько яиц?', created: t - 8e6 }];
+      }
+      const who = id => id === 1 ? st.me : users.find(x => x.id === id);
+      const shapeP = x => ({ id: x.id, author: who(x.user_id), media: x.media, caption: x.caption, meta: x.meta, created: x.created,
+        likes: x.likesBase + x.likers.size, liked: x.likers.has(1), comments: st.comments.filter(c => c.post_id === x.id).length, mine: x.user_id === 1 });
+      const vis = x => x.user_id === 1 || st.fr[x.user_id] === 'friends';
+      const shapeC = c => ({ id: c.id, body: c.body, created: c.created, author: who(c.user_id) });
+      const um = /^\/api\/users\/(\d+)$/.exec(p);
+      if (um) { const id = +um[1], x = who(id), visible = id === 1 || st.fr[id] === 'friends';
+        const posts = visible ? st.posts.filter(q => q.user_id === id).sort((a, b) => b.created - a.created).map(shapeP) : [];
+        return { user: { ...x, state: id === 1 ? 'self' : st.fr[id] || 'none', postsCount: st.posts.filter(q => q.user_id === id).length, friendsCount: id === 1 ? users.filter(y => st.fr[y.id] === 'friends').length : 3 + id }, posts, visible }; }
+      if (p === '/api/feed') return { posts: st.posts.filter(vis).sort((a, b) => b.created - a.created).map(shapeP) };
+      if (p === '/api/posts' && M === 'POST') { const x = { id: ++st.id, user_id: 1, media: st.media[body.media], caption: body.caption || '', meta: body.meta || {}, created: Date.now(), likers: new Set(), likesBase: 0 }; st.posts.push(x); return { post: shapeP(x) }; }
+      const pm = /^\/api\/posts\/(\d+)(\/like|\/comments)?$/.exec(p);
+      if (pm) { const x = st.posts.find(q => q.id === +pm[1]); if (!x || !vis(x)) throw new Error('Публикация не найдена');
+        if (!pm[2] && M === 'GET') return { post: shapeP(x), comments: st.comments.filter(c => c.post_id === x.id).map(shapeC) };
+        if (!pm[2] && M === 'DELETE') { st.posts = st.posts.filter(q => q !== x); return { ok: true }; }
+        if (pm[2] === '/like') { M === 'POST' ? x.likers.add(1) : x.likers.delete(1); const s2 = shapeP(x); return { likes: s2.likes, liked: s2.liked }; }
+        if (pm[2] === '/comments') { const c = { id: ++st.id, post_id: x.id, user_id: 1, body: body.body, created: Date.now() }; st.comments.push(c); return { comment: shapeC(c) }; } }
+      const dcm = /^\/api\/comments\/(\d+)$/.exec(p);
+      if (dcm) { st.comments = st.comments.filter(c => c.id !== +dcm[1]); return { ok: true }; }
       if (p === '/api/health') return { days: [] };
       if (p === '/api/sync') return M === 'GET' ? { data: null } : { ok: true };
       throw new Error('Недоступно в демо');

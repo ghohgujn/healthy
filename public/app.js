@@ -180,7 +180,7 @@
   const stack = [];
   function setInert() {
     const top = stack[stack.length - 1]?.el;
-    for (const el of [document.querySelector('.app'), ...document.querySelectorAll('.sheet-wrap, .cam, .chat')]) el.inert = !!top && el !== top;
+    for (const el of [document.querySelector('.app'), ...document.querySelectorAll('.sheet-wrap, .cam, .chat, .uview')]) el.inert = !!top && el !== top;
   }
   function openDialog(el, focusSel) {
     stack.push({ el, back: document.activeElement });
