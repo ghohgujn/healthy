@@ -27,6 +27,7 @@
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
     <symbol id="i-sliders" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></g></symbol>
     <symbol id="i-camera" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></g></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 2.4 17.6A2 2 0 0 0 4.1 20.6h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" fill="currentColor" stroke="none"/><path d="M12 9v4.6" stroke="var(--alert-ink, #1a1300)" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="17" r="1.25" fill="var(--alert-ink, #1a1300)"/></symbol>
     <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15zM10 20.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-image" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5"/></g></symbol>
@@ -255,6 +256,10 @@
       <div class="sheet-photo">
         <img id="mealPhoto" alt="">
         <button class="icon-btn icon-btn-float" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button>
+        <div class="photo-rail" id="mealRail" hidden>
+          <button class="rail-btn" id="shareMeal" aria-label="Поделиться с друзьями или в профиле"><span class="rail-ico"><svg><use href="#i-share"/></svg></span><span class="rail-lbl">Поделиться</span></button>
+          <button class="rail-btn rail-warn" id="reportMeal" aria-label="Сообщить, что посчитано неточно"><span class="rail-ico"><svg><use href="#i-alert"/></svg></span><span class="rail-lbl">Неточно?</span></button>
+        </div>
       </div>
       <div class="sheet-body">
         <div class="loading" id="mealLoading">
@@ -302,7 +307,6 @@
       </div>
       <footer class="sheet-foot" id="mealFoot" hidden>
         <button class="btn btn-icon btn-ghost" id="deleteMeal" aria-label="Удалить приём пищи" hidden><svg><use href="#i-trash"/></svg></button>
-        <button class="btn btn-icon btn-ghost" id="shareMeal" aria-label="Поделиться с друзьями"><svg><use href="#i-share"/></svg></button>
         <button class="btn btn-primary" id="saveMeal">Добавить в дневник</button>
       </footer>
     </section>
@@ -372,6 +376,38 @@
   </div>
 
   <!-- Post -->
+  <div class="sheet-wrap" id="reportSheet" hidden>
+    <div class="scrim" data-close></div>
+    <section class="sheet report-sheet" role="dialog" aria-modal="true" aria-labelledby="reportTitle">
+      <div class="sheet-head"><h2 class="h2" id="reportTitle">Что посчитано не так?</h2><button class="icon-btn" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button></div>
+      <form class="sheet-body report-form" id="reportForm" novalidate>
+        <div class="report-case"><img id="reportThumb" alt=""><div><b id="reportMealName"></b><small id="reportMacros"></small></div></div>
+        <fieldset class="report-reasons"><legend class="field-label">Что не так — можно выбрать несколько</legend>
+          <div class="chips" id="reportReasons">
+            <button type="button" class="chip" role="checkbox" aria-checked="false" data-r="dish">Не то блюдо</button>
+            <button type="button" class="chip" role="checkbox" aria-checked="false" data-r="weight">Неверный вес</button>
+            <button type="button" class="chip" role="checkbox" aria-checked="false" data-r="missing">Пропущен продукт</button>
+            <button type="button" class="chip" role="checkbox" aria-checked="false" data-r="extra">Лишний продукт</button>
+            <button type="button" class="chip" role="checkbox" aria-checked="false" data-r="macros">Калории или БЖУ</button>
+            <button type="button" class="chip" role="checkbox" aria-checked="false" data-r="other">Другое</button>
+          </div>
+        </fieldset>
+        <label class="field"><span class="field-label">Как на самом деле? <i>(необязательно)</i></span>
+          <textarea class="input report-text" id="reportText" rows="3" maxlength="600" placeholder="Например: это сырники, 3 шт. по 60 г, жарены на масле"></textarea></label>
+        <p class="sub small report-note">Вместе с заявкой отправим фото, распознанный состав и ваши правки граммов. Это нужно только для разбора и улучшения точности.</p>
+        <p class="form-err" id="reportErr" role="alert"></p>
+      </form>
+      <footer class="sheet-foot"><button class="btn btn-primary" id="reportSend" type="submit" form="reportForm">Отправить</button></footer>
+    </section>
+  </div>
+  <div class="sheet-wrap" id="casesSheet" hidden>
+    <div class="scrim" data-close></div>
+    <section class="sheet cases-sheet" role="dialog" aria-modal="true" aria-labelledby="casesTitle">
+      <div class="sheet-head"><h2 class="h2" id="casesTitle">Разбор ошибок</h2><button class="icon-btn" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button></div>
+      <div class="seg cases-seg" id="casesSeg" role="radiogroup" aria-label="Статус"><button role="radio" data-st="new" aria-checked="true">Новые</button><button role="radio" data-st="done" aria-checked="false">Разобраны</button><button role="radio" data-st="all" aria-checked="false">Все</button></div>
+      <div class="sheet-body" id="casesBody"></div>
+    </section>
+  </div>
   <div class="sheet-wrap" id="pushSheet" hidden>
     <div class="scrim" data-close></div>
     <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="pushHelpTitle">
@@ -452,7 +488,7 @@
           <label class="radio"><input type="radio" name="model" value="gemini"><span><b>Gemini</b> · 3.5 Flash<small>Сильна в оценке граммов</small></span></label>
         </fieldset>
         <div class="group dev-info" id="devInfo"></div>
-        <div class="row-btns"><button class="btn btn-ghost btn-sm" id="devOnboard">Показать онбординг</button><button class="btn btn-ghost btn-sm" id="devHealth">Проверить сервер</button></div>
+        <div class="row-btns"><button class="btn btn-ghost btn-sm" id="devOnboard">Показать онбординг</button><button class="btn btn-ghost btn-sm" id="devHealth">Проверить сервер</button><button class="btn btn-ghost btn-sm" id="devCases">Разбор ошибок</button></div>
       </div>
     </section>
   </div>
@@ -474,5 +510,6 @@
   <script src="social.js"></script>
   <script src="onboarding.js"></script>
   <script src="posts.js"></script>
+  <script src="reports.js"></script>
 </body>
 </html>

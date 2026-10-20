@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS likes (post_id INTEGER NOT NULL REFERENCES posts(id) 
 CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY, post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, user_id INTEGER NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS comments_post ON comments (post_id, id);
 CREATE TABLE IF NOT EXISTS flame_restores (a INTEGER NOT NULL, b INTEGER NOT NULL, day TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (a, b));
+CREATE TABLE IF NOT EXISTS reports (id INTEGER PRIMARY KEY, user_id INTEGER, created INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'new',
+  reasons TEXT, comment TEXT, title TEXT, model TEXT, confidence TEXT, caption TEXT, ai TEXT, final TEXT, media TEXT, ua TEXT, note TEXT);
 CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY, user_id INTEGER NOT NULL, p256dh TEXT NOT NULL, auth TEXT NOT NULL, created INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS push_user ON push_subs (user_id);
 CREATE TABLE IF NOT EXISTS health (user_id INTEGER NOT NULL, date TEXT NOT NULL, steps INTEGER, active_kcal INTEGER, source TEXT, updated INTEGER NOT NULL,
@@ -105,6 +107,36 @@ const friendState = (me, other) => {
 };
 const areFriends = (a, b) => friendState(a, b) === 'friends';
 const canSee = (me, author) => me === author || areFriends(me, author);
+
+/* ---------------- заявки «посчитано неверно» ---------------- */
+const ADMINS = new Set(String(process.env.ADMIN_USERS || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
+const isAdmin = u => Boolean(u && ADMINS.has(String(u.username).toLowerCase()));
+const REASONS = ['dish', 'weight', 'missing', 'extra', 'macros', 'other'];
+const cleanItems = a => JSON.stringify((Array.isArray(a) ? a : []).slice(0, 20).map(i => ({ name: String(i?.name || '').slice(0, 60), grams: num(i?.grams),
+  kcal_100: num(i?.kcal_100), p_100: num(i?.p_100), f_100: num(i?.f_100), c_100: num(i?.c_100), fat: String(i?.fat || '').slice(0, 10) })));
+async function saveReport(req, res) {
+  rate('report:' + ipOf(req), 20, 3_600_000);
+  const u = userOf(req), b = await json(req, 6_000_000);
+  const reasons = (Array.isArray(b.reasons) ? b.reasons : []).filter(r => REASONS.includes(r));
+  const comment = String(b.comment || '').trim().slice(0, 600);
+  if (!reasons.length && !comment) throw fail(400, 'Отметьте, что не так, или напишите пару слов');
+  let media = null;
+  const m = /^data:image\/(jpeg|png|webp);base64,(.+)$/s.exec(String(b.image || ''));
+  if (m) {
+    const buf = Buffer.from(m[2], 'base64');
+    if (buf.length > 100 && buf.length <= 3e6) {
+      media = randomBytes(16).toString('hex') + (m[1] === 'png' ? '.png' : m[1] === 'webp' ? '.webp' : '.jpg');
+      await writeFile(join(MEDIA, media), buf);
+      q('INSERT INTO media (id, owner, type, size, created) VALUES (?, ?, ?, ?, ?)').run(media, u ? u.id : 0, 'image/' + m[1], buf.length, now());
+    }
+  }
+  const r = q(`INSERT INTO reports (user_id, created, reasons, comment, title, model, confidence, caption, ai, final, media, ua)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(u ? u.id : null, now(), JSON.stringify(reasons), comment, String(b.title || '').slice(0, 120),
+    String(b.model || '').slice(0, 60), String(b.confidence || '').slice(0, 10), String(b.caption || '').slice(0, 300),
+    b.ai ? cleanItems(b.ai) : null, cleanItems(b.final), media, String(req.headers['user-agent'] || '').slice(0, 160));
+  console.log(`report #${r.lastInsertRowid} ${reasons.join(',')} ${comment.slice(0, 60)}`);
+  send(res, 200, { ok: true, id: Number(r.lastInsertRowid) });
+}
 
 /* ---------------- пуш-уведомления ---------------- */
 const VAPID = loadVapid(DATA);
@@ -248,7 +280,7 @@ async function serveMedia(req, res, id) {
   if (!m) { res.writeHead(404); return res.end(); }
   const me = userOf(req);
   const isAvatar = q('SELECT 1 FROM users WHERE avatar = ?').get(id);
-  const allowed = isAvatar || (me && (m.owner === me.id ||
+  const allowed = isAvatar || isAdmin(me) || (me && (m.owner === me.id ||
     q('SELECT 1 FROM messages WHERE media = ? AND (sender = ? OR recipient = ?)').get(id, me.id, me.id) ||
     q('SELECT user_id FROM posts WHERE media = ?').all(id).some(p => canSee(me.id, p.user_id))));
   if (!allowed) { res.writeHead(403); return res.end(); }
@@ -355,6 +387,7 @@ async function api(req, res, url) {
     console.error('client', u ? '@' + u.username : 'anon', String(b.where || '').slice(0, 40), String(b.error || '').slice(0, 300), String(req.headers['user-agent'] || '').slice(0, 120));
     return send(res, 200, { ok: true });
   }
+  if (p === '/api/reports' && M === 'POST') return saveReport(req, res);
   if (p === '/api/push/key' && M === 'GET') return send(res, 200, { key: VAPID.publicKey });
   const me = need(req);
   if (p === '/api/push/subscribe' && M === 'POST') {
@@ -375,7 +408,24 @@ async function api(req, res, url) {
     notify(me.id, { title: 'Healthy Fit', body: 'Уведомления работают 👍', url: '/', tag: 'test' });
     return send(res, 200, { devices: n });
   }
-  if (p === '/api/me' && M === 'GET') return send(res, 200, { me: { ...pub(me), healthToken: me.health_token } });
+  if (p === '/api/me' && M === 'GET') return send(res, 200, { me: { ...pub(me), healthToken: me.health_token, admin: isAdmin(me) } });
+  if (p === '/api/admin/reports' && M === 'GET') {
+    if (!isAdmin(me)) throw fail(403, 'Только для администратора');
+    const st = url.searchParams.get('status') || 'new';
+    const rows = q(`SELECT r.*, u.username FROM reports r LEFT JOIN users u ON u.id = r.user_id WHERE ? = 'all' OR r.status = ? ORDER BY r.id DESC LIMIT 200`).all(st, st);
+    const counts = Object.fromEntries(q('SELECT status, COUNT(*) n FROM reports GROUP BY status').all().map(x => [x.status, x.n]));
+    return send(res, 200, { counts, reports: rows.map(r => ({ id: r.id, created: r.created, status: r.status, username: r.username || null,
+      reasons: JSON.parse(r.reasons || '[]'), comment: r.comment, title: r.title, model: r.model, confidence: r.confidence, caption: r.caption,
+      ai: r.ai ? JSON.parse(r.ai) : null, final: JSON.parse(r.final || '[]'), media: r.media ? `/media/${r.media}` : '', note: r.note || '' })) });
+  }
+  const ar = /^\/api\/admin\/reports\/(\d+)$/.exec(p);
+  if (ar && M === 'PATCH') {
+    if (!isAdmin(me)) throw fail(403, 'Только для администратора');
+    const b = await json(req, 8_000);
+    q('UPDATE reports SET status = COALESCE(?, status), note = COALESCE(?, note) WHERE id = ?').run(
+      ['new', 'done', 'skip'].includes(b.status) ? b.status : null, b.note != null ? String(b.note).slice(0, 600) : null, Number(ar[1]));
+    return send(res, 200, { ok: true });
+  }
   if (p === '/api/me' && M === 'PATCH') {
     const b = await json(req, 32_000);
     const name = b.name != null ? String(b.name).trim().slice(0, 30) : me.name;

@@ -20,7 +20,14 @@ window.HFMockApi = (() => {
         if (!body.username || String(body.password || '').length < 6) throw new Error(p.endsWith('login') ? 'Неверный логин или пароль' : 'Пароль — минимум 6 символов');
         st.me = { id: 1, username: body.username, name: body.name || body.username, avatar: '', bio: '', stats: {}, healthToken: 'demo-token' }; return { me: st.me }; }
       if (p === '/api/auth/logout') { st.me = null; return { ok: true }; }
+      if (p === '/api/reports' && M === 'POST') {
+        st.reports ||= []; if (!(body.reasons || []).length && !body.comment) throw new Error('Отметьте, что не так, или напишите пару слов');
+        st.reports.unshift({ id: st.reports.length + 1, created: Date.now(), status: 'new', username: st.me?.username || null, ...body, media: body.image || '' }); return { ok: true };
+      }
       if (!st.me) throw Object.assign(new Error('Войдите в аккаунт'), { status: 401 });
+      if (p === '/api/admin/reports') { const sx = u.searchParams.get('status'); const all = st.reports || [];
+        return { counts: { new: all.filter(r => r.status === 'new').length }, reports: all.filter(r => sx === 'all' || r.status === sx) }; }
+      const arm = /^\/api\/admin\/reports\/(\d+)$/.exec(p); if (arm) { const r = (st.reports || []).find(x => x.id === +arm[1]); if (r) r.status = body.status; return { ok: true }; }
       if (p === '/api/me') { if (M === 'PATCH') Object.assign(st.me, { name: body.name || st.me.name, username: body.username || st.me.username }); return { me: st.me }; }
       if (p === '/api/users') { const q = (u.searchParams.get('q') || '').toLowerCase(); return { users: users.filter(x => (x.username + x.name).toLowerCase().includes(q)).map(pubU) }; }
       if (p === '/api/friends') return { friends: users.filter(x => st.fr[x.id] === 'friends'), incoming: users.filter(x => st.fr[x.id] === 'incoming'), sent: users.filter(x => st.fr[x.id] === 'sent') };

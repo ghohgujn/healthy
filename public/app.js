@@ -333,6 +333,7 @@
     $('#mealError').hidden = state !== 'error';
     $('#mealResult').hidden = state !== 'result';
     $('#mealFoot').hidden = state !== 'result';
+    $('#mealRail').hidden = state !== 'result';
   }
   function abortAnalysis() { inflight?.abort(); inflight = null; reqSeq++; }
 
@@ -377,7 +378,7 @@
       }
       if (my !== reqSeq || d !== draft) return; // stale response
       if (!data.items || !data.items.length) throw new Error('Не вижу еды на фото. Сфотографируйте тарелку сверху, целиком.');
-      Object.assign(d, { items: data.items, question: data.question || '', options: data.options || [], model: data.model, confidence: data.confidence });
+      Object.assign(d, { items: data.items, ai: JSON.parse(JSON.stringify(data.items)), question: data.question || '', options: data.options || [], model: data.model, confidence: data.confidence });
       renderDraft(); showState('result'); $('#saveMeal').focus();
     } catch (err) {
       if (my !== reqSeq || d !== draft) return;
@@ -402,6 +403,7 @@
     $('#mealName').textContent = draft.editing && draft.name ? draft.name : titleOf(draft.items);
     const conf = { low: 'низкая', medium: 'средняя', high: 'высокая' }[draft.confidence] || '';
     $('#mealMeta').textContent = [draft.model, conf && `уверенность ${conf}`].filter(Boolean).join(' · ');
+    $('#reportMeal').classList.toggle('attn', draft.confidence === 'low' && !draft.editing);
     renderTotals();
 
     const q = $('#question');
@@ -848,7 +850,7 @@
   }
 
   $('#shareMeal').onclick = () => window.HFSocial?.shareMeal({ name: $('#mealName').textContent, thumb: draft.thumb, items: draft.items.map(i => ({ ...i })), totals: mealTotals(draft.items) });
-  window.HF = { setInert, get db() { return db; }, set db(v) { db = v; }, validDb, mergeDb, save, day, mealTotals, openDialog, closeDialog, toast, render, streakInfo, keyOf, today, showTab, loadImage, paintAvatar, actKcal };
+  window.HF = { get draft() { return draft; }, mealTitle: () => $('#mealName').textContent, setInert, get db() { return db; }, set db(v) { db = v; }, validDb, mergeDb, save, day, mealTotals, openDialog, closeDialog, toast, render, streakInfo, keyOf, today, showTab, loadImage, paintAvatar, actKcal };
 
   /* ---------- day rollover ---------- */
   function rollDay() {
