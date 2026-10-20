@@ -29,6 +29,9 @@
     <symbol id="i-camera" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></g></symbol>
     <symbol id="i-spark" viewBox="0 0 24 24"><path d="M10 3.5c.6 3.9 2.6 5.9 6.5 6.5-3.9.6-5.9 2.6-6.5 6.5-.6-3.9-2.6-5.9-6.5-6.5 3.9-.6 5.9-2.6 6.5-6.5zM18 14.5c.3 1.8 1.2 2.7 3 3-1.8.3-2.7 1.2-3 3-.3-1.8-1.2-2.7-3-3 1.8-.3 2.7-1.2 3-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
     <symbol id="i-reply" viewBox="0 0 24 24"><path d="M9.5 7 4 12l5.5 5M4.5 12H14a6 6 0 0 1 6 6v1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-ios-share" viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4M7 10H5.5A1.5 1.5 0 0 0 4 11.5v8A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5v-8A1.5 1.5 0 0 0 18.5 10H17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-add-square" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-dots-v" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="19" r="1.8" fill="currentColor"/></symbol>
     <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 2.4 17.6A2 2 0 0 0 4.1 20.6h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" fill="currentColor" stroke="none"/><path d="M12 9v4.6" stroke="var(--alert-ink, #1a1300)" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="17" r="1.25" fill="var(--alert-ink, #1a1300)"/></symbol>
     <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15zM10 20.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -424,6 +427,18 @@
       <div class="sheet-head"><h2 class="h2" id="casesTitle">Разбор ошибок</h2><button class="icon-btn" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button></div>
       <div class="seg cases-seg" id="casesSeg" role="radiogroup" aria-label="Статус"><button role="radio" data-st="new" aria-checked="true">Новые</button><button role="radio" data-st="done" aria-checked="false">Разобраны</button><button role="radio" data-st="all" aria-checked="false">Все</button></div>
       <div class="sheet-body" id="casesBody"></div>
+    </section>
+  </div>
+  <div class="sheet-wrap" id="installSheet" hidden>
+    <div class="scrim" data-close></div>
+    <section class="sheet install-sheet" role="dialog" aria-modal="true" aria-labelledby="installTitle">
+      <div class="sheet-body">
+        <div class="inst-head"><img src="/icon-192.png" alt="" width="64" height="64"><div><h2 class="h2" id="installTitle">Healthy Fit на экран «Домой»</h2>
+          <p class="sub">Откроется как приложение: на весь экран, с уведомлениями о сообщениях и камерой в одно касание.</p></div></div>
+        <ol class="inst-steps" id="installSteps"></ol>
+        <p class="sub small inst-note" id="installNote"></p>
+      </div>
+      <footer class="sheet-foot"><button class="btn btn-ghost" id="installLater" data-close>Позже</button><button class="btn btn-primary" id="installMain">Понятно</button></footer>
     </section>
   </div>
   <div class="sheet-wrap" id="pushSheet" hidden>

@@ -199,12 +199,19 @@
   /* ---------- dialogs: focus trap + scroll lock ---------- */
   const stack = [];
   function setInert() {
+    // страховка: окна, которые уже скрыты, из стека убираем
+    for (let i = stack.length - 1; i >= 0; i--) if (stack[i].el.hidden) stack.splice(i, 1);
+    if (!stack.length) document.body.style.overflow = '';
     const top = stack[stack.length - 1]?.el;
     const onb = document.querySelector('#onb'), onbOpen = onb && !onb.hidden;
     for (const el of [document.querySelector('.app'), document.querySelector('.tabbar'), ...document.querySelectorAll('.sheet-wrap, .cam, .chat, .uview')]) if (el) el.inert = (!!top && el !== top && !el.contains(top)) || (onbOpen && !top);
   }
   function openDialog(el, focusSel) {
+    // повторное открытие уже открытого окна не должно дублировать запись — иначе после закрытия экран «замерзал»
+    const i = stack.findIndex(s => s.el === el);
+    if (i >= 0) { stack.push(stack.splice(i, 1)[0]); el.hidden = false; setInert(); return; }
     stack.push({ el, back: document.activeElement });
+    document.querySelector('#toast.show')?.classList.add('top');   // уже показанный тост не должен закрывать новое окно
     el.hidden = false; document.body.style.overflow = 'hidden'; setInert();
     (el.querySelector(focusSel || '[data-close]:not(.scrim), button') || el).focus();
   }
@@ -552,6 +559,7 @@
     if (!fromBack && name !== tab) { tabTrail.push(tab); if (tabTrail.length > 20) tabTrail.shift(); }
     tab = name;
     for (const t of ['today', 'activity', 'feed', 'chats', 'profile']) $('#tab-' + t).hidden = t !== name;
+    setInert();
     // «Активность» живёт внутри «Сегодня»: подсвечиваем ту же кнопку внизу
     const navName = name === 'activity' ? 'today' : name;
     document.querySelectorAll('.day-seg [data-goto]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.goto === name)));

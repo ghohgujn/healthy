@@ -1088,3 +1088,18 @@ img { display: block; max-width: 100%; }
 .steps-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: var(--space-xs); }
 .steps-ctl { display: contents; }
 #stepsHealth { grid-column: 1 / -1; grid-row: 2; justify-self: start; min-height: 36px; }
+
+/* ===== v18: «На экран „Домой“» ===== */
+.install-sheet .sheet-body { padding-top: var(--space-xl); }
+.inst-head { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: var(--space-md); align-items: center; margin-bottom: var(--space-lg); }
+.inst-head img { width: 64px; height: 64px; border-radius: 16px; box-shadow: 0 0 0 1px var(--color-rule), 0 6px 16px -8px oklch(0% 0 0 / 0.4); }
+.inst-head h2 { margin: 0 0 4px; overflow-wrap: anywhere; }
+.inst-head p { margin: 0; }
+.inst-steps { list-style: none; counter-reset: st; margin: 0; padding: 0; display: grid; gap: 2px; }
+.inst-steps li { counter-increment: st; display: grid; grid-template-columns: 24px 40px minmax(0, 1fr); gap: var(--space-sm); align-items: center; padding: 10px 0; border-bottom: 1px solid var(--color-rule); line-height: 1.4; }
+.inst-steps li:last-child { border-bottom: 0; }
+.inst-steps li::before { content: counter(st); font-weight: 800; color: var(--color-muted); text-align: center; font-variant-numeric: tabular-nums; }
+.inst-ico { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--color-paper-2); color: var(--color-water, var(--color-ink)); }
+.inst-ico svg { width: 22px; height: 22px; }
+.inst-note { margin: var(--space-sm) 0 0; }
+.install-sheet .sheet-foot .btn { flex: 1; }

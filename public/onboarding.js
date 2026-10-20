@@ -20,6 +20,7 @@
   }
   function close() {
     el.hidden = true; document.body.style.overflow = ''; HF.setInert();
+    if (S()?.me) window.HFInstall?.maybe(1600);   // зарегистрировался — предложим поставить на экран «Домой»
     try { localStorage.setItem(KEY, '1'); } catch {}
     HF.render();
   }

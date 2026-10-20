@@ -96,7 +96,7 @@
         const r = await api(mode === 'reg' ? '/api/auth/register' : '/api/auth/login', { method: 'POST',
           body: { name: f.get('name'), username: f.get('username'), password: f.get('password') } });
         me = r.me; HF.toast(mode === 'reg' ? `Добро пожаловать, ${me.name}!` : 'Вы вошли');
-        if (mode === 'reg') { claimDiary(); await pushProfile(); } else await restoreIfEmpty();
+        if (mode === 'reg') { claimDiary(); await pushProfile(); maybeOfferInstall(1200); } else await restoreIfEmpty();
         boot();
       } catch (err) { $('#authErr').textContent = err.message; }
       finally { btn.disabled = false; }
@@ -124,7 +124,9 @@
       <label class="field"><span class="field-label">Короткое имя — по нему вас находят друзья</span>
         <span class="uname"><span>@</span><input class="input" id="unameInput" maxlength="20" autocapitalize="none" spellcheck="false" autocomplete="username" value="${esc(me.username)}"></span></label>
       <p class="sub small" id="unameHint"></p>
-      <div class="push-row" id="pushRow"></div>`;
+      <div class="push-row" id="pushRow"></div>
+      ${canOfferInstall() ? '<div class="push-row"><div><b>Приложение на экране «Домой»</b><p class="sub small">Быстрый запуск и уведомления</p></div><button class="btn btn-ghost btn-sm" id="installOpen">Установить</button></div>' : ''}`;
+    $('#installOpen')?.addEventListener('click', openInstall);
     renderPushUI();
     const ui = $('#unameInput');
     ui.addEventListener('input', () => checkName(ui.value, $('#unameHint'), me.username));
@@ -821,6 +823,41 @@
       if (p.get('post')) window.HFPosts?.openPost(+p.get('post'), true);
     } catch (e) { HF.toast(e.message); }
   }
+
+  /* ================= «На экран „Домой“» ================= */
+  let installEvt = null;   // Android/Chrome: системное окно установки
+  addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; renderAccountCard(); });
+  addEventListener('appinstalled', () => { installEvt = null; lsSet('hf.installed', '1'); });
+  const isMobile = isIOS || isAndroid;
+  const canOfferInstall = () => !mock && isMobile && !standalone && lsGet('hf.installed') !== '1';
+  function openInstall() {
+    const ios = isIOS, chromeIOS = /CriOS|FxiOS|EdgiOS/.test(navigator.userAgent);
+    const step = (ico, html) => `<li><span class="inst-ico"><svg aria-hidden="true"><use href="#${ico}"/></svg></span><span>${html}</span></li>`;
+    $('#installSteps').innerHTML = ios
+      ? step('i-ios-share', chromeIOS ? 'Нажмите <b>«Поделиться»</b> в адресной строке' : 'Нажмите <b>«Поделиться»</b> в панели Safari — внизу или вверху экрана')
+        + step('i-add-square', 'Пролистайте вниз и выберите <b>«На экран „Домой“»</b>')
+        + step('i-check', 'Нажмите <b>«Добавить»</b> — иконка появится рядом с другими приложениями')
+      : installEvt ? step('i-check', 'Нажмите <b>«Установить»</b> ниже и подтвердите')
+      : step('i-dots-v', 'Откройте меню браузера — три точки справа вверху')
+        + step('i-add-square', 'Выберите <b>«Установить приложение»</b> или <b>«Добавить на главный экран»</b>');
+    $('#installNote').textContent = ios ? 'В приложении с экрана «Домой» войдите тем же логином — дневник подтянется из облака.' : '';
+    const main = $('#installMain'); main.textContent = !ios && installEvt ? 'Установить' : 'Понятно';
+    main.onclick = async () => {
+      if (!ios && installEvt) { installEvt.prompt(); const r = await installEvt.userChoice.catch(() => null); installEvt = null; if (r?.outcome === 'accepted') lsSet('hf.installed', '1'); }
+      else lsSet('hf.installSeen', String(Date.now()));
+      HF.closeDialog($('#installSheet'));
+    };
+    $('#installLater').onclick = () => lsSet('hf.installLater', String(Date.now()));
+    $('#toast').classList.remove('show');   // подсказки поверх инструкции не нужны
+    HF.openDialog($('#installSheet'), '#installMain');
+  }
+  // после регистрации — один раз, и не чаще раза в 3 дня, если отложили
+  function maybeOfferInstall(delay = 900) {
+    if (!canOfferInstall()) return;
+    if (Date.now() - +(lsGet('hf.installLater') || 0) < 3 * 864e5 || lsGet('hf.installSeen')) return;
+    setTimeout(() => { if (!document.querySelector('.sheet-wrap:not([hidden]), .chat:not([hidden]), #onb:not([hidden])')) openInstall(); }, delay);
+  }
+  window.HFInstall = { open: openInstall, maybe: maybeOfferInstall, can: canOfferInstall };
 
   /* ================= hooks ================= */
   $('#chatAva').onclick = $('#chatName').onclick = () => { if (peer) window.HFPosts?.openUser(peer.id); };

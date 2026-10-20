@@ -84,7 +84,7 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !uv.hidden && $('#postSheet').hidden) { e.stopPropagation(); HF.closeDialog(uv); } }, true);
 
   /* ---------- лента: «Для вас» (все открытые посты по свежести) и «Друзья» ---------- */
-  let scope = 'all', feedPosts = [], feedEnd = false, feedLoading = false;
+  let scope = 'all', feedPosts = [], feedEnd = false, feedLoading = false, feedAt = 0, feedScope = '';
   try { scope = localStorage.getItem('hf.feedScope') || 'all'; } catch {}
   const segBtns = () => $('#feedSeg').querySelectorAll('[data-scope]');
   segBtns().forEach(b => {
@@ -104,8 +104,10 @@
       <button class="btn btn-primary" id="feedLogin">Войти или создать аккаунт</button></div>`, $('#feedLogin').onclick = () => HF.showTab('chats');
     return !!me;
   }
-  async function loadFeed(reset) {
+  async function loadFeed(reset, soft) {
     if (!feedGate() || feedLoading || (!reset && feedEnd)) return;
+    if (soft && feedScope === scope && Date.now() - feedAt < 30000) return;   // только что грузили — не дёргаем сеть и не перерисовываем
+    feedAt = Date.now(); feedScope = scope;
     feedLoading = true;
     if (reset && !feedPosts.length) $('#feedView').innerHTML = '<div class="uv-loading"><div class="scan"></div></div>';
     try {
@@ -285,6 +287,6 @@
 
   /* ---------- хуки ---------- */
   const prevOnTab = S().onTab;
-  S().onTab = name => { prevOnTab(name); if (name === 'profile') renderOwn(); if (name === 'feed') loadFeed(true); };
+  S().onTab = name => { prevOnTab(name); if (name === 'profile') renderOwn(); if (name === 'feed') loadFeed(true, true); };
   window.HFPosts = { openUser, openPost, refresh() { renderOwn(); if (!$('#tab-feed').hidden) loadFeed(true); } };
 })();
