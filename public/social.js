@@ -549,7 +549,14 @@
 
   /* ================= share (TikTok-style) ================= */
   let shareData = null, toProfile = false; const picked = new Set();
+  let shareVis = 'public';
+  try { shareVis = localStorage.getItem('hf.shareVis') || 'public'; } catch {}
+  $('#shareVis').querySelectorAll('[data-vis]').forEach(b => b.onclick = () => {
+    shareVis = b.dataset.vis; try { localStorage.setItem('hf.shareVis', shareVis); } catch {} updShare();
+  });
   function updShare() {
+    $('#shareVis').hidden = !toProfile;
+    $('#shareVis').querySelectorAll('[data-vis]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.vis === shareVis)));
     const n = picked.size + (toProfile ? 1 : 0), btn = $('#shareSend');
     btn.disabled = !n;
     btn.textContent = toProfile && !picked.size ? 'Опубликовать' : toProfile ? `Опубликовать и отправить · ${picked.size}` : picked.size > 1 ? `Отправить · ${picked.size}` : 'Отправить';
@@ -583,7 +590,7 @@
       if (d.thumb) media = (await uploadImage(d.thumb)).id;
       const meta = { title: d.name, kcal: d.totals.kcal, p: d.totals.p, f: d.totals.f, c: d.totals.c, items: d.items.map(i => ({ name: i.name, grams: i.grams })) };
       const body = $('#shareText').value.trim();
-      if (toProfile && media) await api('/api/posts', { method: 'POST', body: { media, caption: body, meta } });
+      if (toProfile && media) await api('/api/posts', { method: 'POST', body: { media, caption: body, meta, vis: shareVis } });
       for (const id of picked) await api(`/api/chats/${id}`, { method: 'POST', body: { kind: 'meal', media, meta, body } });
       HF.closeDialog($('#shareSheet'));
       const saved = d.onSent?.();

@@ -886,3 +886,74 @@ img { display: block; max-width: 100%; }
 .rail-warn.attn .rail-lbl { background: oklch(84% 0.16 85); color: oklch(22% 0.04 85); }
 /* в тёмной теме тот же светлый матовый стиль: кнопки лежат на фото, а не на интерфейсе — так их видно и на чёрной еде */
 .icon-btn-float:hover { background: oklch(100% 0 0 / 0.95); }
+
+/* ===== v12: лента «Для вас / Друзья», сообщения в шапке, комментарии как в TikTok ===== */
+.inbox-btn { position: relative; color: var(--color-ink); }
+.inbox-btn svg { width: 24px; height: 24px; }
+.inbox-btn.on { background: var(--color-paper-2); }
+.inbox-btn .badge { top: 3px; left: auto; right: 1px; }
+.chats-head { display: flex; align-items: center; gap: var(--space-2xs, 4px); margin-left: -10px; }
+
+.feed-seg { position: sticky; top: 0; z-index: 3; display: flex; justify-content: center; gap: var(--space-lg); margin: 0 calc(-1 * var(--space-md)) var(--space-sm);
+  padding: 6px var(--space-md) 0; background: color-mix(in oklch, var(--color-paper) 88%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+.feed-seg button { position: relative; border: 0; background: none; min-height: 44px; padding: 0 4px; font-size: var(--text-base, 1rem); font-weight: 700; color: var(--color-muted); transition: color var(--dur-fast) var(--ease-out); }
+.feed-seg button[aria-checked="true"] { color: var(--color-ink); }
+.feed-seg button::after { content: ''; position: absolute; left: 50%; bottom: 4px; width: 22px; height: 3px; border-radius: 3px; background: var(--color-ink); transform: translateX(-50%) scaleX(0); transition: transform var(--dur-med, .22s) var(--ease-out); }
+.feed-seg button[aria-checked="true"]::after { transform: translateX(-50%) scaleX(1); }
+.feed-gate { display: grid; justify-items: center; text-align: center; gap: var(--space-sm); padding: var(--space-xl) var(--space-lg); }
+.feed-gate > svg { width: 44px; height: 44px; color: var(--color-streak); }
+.grid-note { text-align: center; margin-top: var(--space-sm); }
+
+.share-vis { display: grid; gap: 6px; margin: var(--space-sm) 0; }
+.share-vis[hidden] { display: none; }
+.share-vis .seg button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.share-vis .seg svg { width: 16px; height: 16px; }
+
+/* комментарии */
+.post-sheet { grid-template-rows: minmax(0, 1fr) auto auto; }
+.cmt-title { font-size: var(--text-sm); font-weight: 700; text-align: center; color: var(--color-muted); margin: var(--space-md) 0 var(--space-xs); }
+.cmt-title:empty { display: none; }
+.comments { gap: 2px; }
+.cmt { display: block; position: relative; overflow: hidden; touch-action: pan-y; border-radius: 14px; }
+.cmt-row { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr) 44px; gap: 10px; align-items: start; padding: 8px 0 8px 2px; background: var(--color-paper); transition: transform var(--dur-fast) var(--ease-out); }
+.cmt.is-reply .cmt-row { grid-template-columns: 28px minmax(0, 1fr) 44px; }
+.cmt-ava { width: 40px; height: 40px; }
+.cmt-ava .avatar { width: 36px; height: 36px; font-size: var(--text-sm); }
+.cmt.is-reply .cmt-ava { width: 28px; height: 28px; } .cmt.is-reply .cmt-ava .avatar { width: 24px; height: 24px; font-size: 11px; }
+.cmt-main { min-width: 0; cursor: pointer; }
+.cmt-name { font-size: var(--text-xs); font-weight: 700; color: var(--color-muted); margin: 0 0 2px; display: flex; align-items: center; gap: 6px; }
+.cmt-badge { font-size: 10px; font-weight: 800; color: var(--color-streak); background: var(--color-streak-bg); padding: 1px 6px; border-radius: var(--radius-pill); }
+.cmt-text { margin: 0; font-size: var(--text-sm); line-height: 1.4; overflow-wrap: anywhere; }
+.cmt-to { font-weight: 700; color: var(--color-ink-2); }
+.cmt-meta { margin: 2px 0 0; display: flex; align-items: center; gap: 2px; color: var(--color-muted); font-size: var(--text-xs); }
+.cmt-meta > span { margin-right: 6px; }
+.cmt-act { border: 0; background: none; color: var(--color-muted); font-size: var(--text-xs); font-weight: 700; min-height: 32px; padding: 0 8px; border-radius: 8px; }
+.cmt-act:hover { background: var(--color-paper-2); }
+.cmt-like { border: 0; background: none; display: grid; justify-items: center; align-content: start; gap: 0; min-height: 44px; padding-top: 4px; color: var(--color-muted); font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cmt-like svg { width: 20px; height: 20px; }
+.cmt-like.on { color: var(--color-danger); }
+.cmt-like.on svg { animation: pop .3s var(--ease-out); }
+.cmt-swipe { position: absolute; right: 18px; top: 50%; transform: translateY(-50%) scale(calc(0.6 + 0.4 * var(--sw, 0))); opacity: var(--sw, 0); color: var(--color-muted); }
+.cmt-swipe svg { width: 22px; height: 22px; }
+.cmt.armed .cmt-swipe { color: var(--color-ink); }
+.cmt.fresh .cmt-row { animation: fresh 1.4s var(--ease-out); }
+@keyframes fresh { from { background: var(--color-streak-bg); } to { background: var(--color-paper); } }
+.cmt-thread { list-style: none; padding-left: 50px; }
+.cmt-thread > ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.cmt-more { display: flex; align-items: center; gap: 8px; border: 0; background: none; color: var(--color-muted); font-size: var(--text-xs); font-weight: 700; min-height: 36px; padding: 0; }
+.cmt-more i { width: 24px; height: 1px; background: var(--color-rule-strong); }
+.reply-chip { display: flex; align-items: center; gap: 8px; padding: 2px 4px 2px var(--space-md); background: var(--color-paper-2); color: var(--color-ink-2); font-size: var(--text-sm); font-weight: 600; border-top: 1px solid var(--color-rule); }
+.reply-chip[hidden] { display: none; }
+.reply-chip > svg { width: 16px; height: 16px; flex: none; }
+.reply-chip span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .cmt.fresh .cmt-row, .cmt-like.on svg { animation: none; } .cmt-row { transition: none; } }
+.cmt-meta { flex-wrap: wrap; row-gap: 0; }
+.cmt-meta > span, .cmt-act { white-space: nowrap; }
+.fcard.in-sheet .fc-more { display: none; }
+.push-banner { grid-template-columns: 24px minmax(0, 1fr) auto; position: relative; padding-right: 44px; }
+.push-banner #pushBanX { position: absolute; top: 2px; right: 2px; }
+@media (max-width: 360px) { .cmt-thread { padding-left: 34px; } .feed-seg { gap: var(--space-md); } }
+.brand { white-space: nowrap; }
+.push-banner { grid-template-columns: 24px minmax(0, 1fr); align-items: start; }
+.push-banner #pushBanOn { grid-column: 2; justify-self: start; }
+@media (max-width: 360px) { .brand { font-size: 1.05rem; } .top-right { gap: 2px; } .top-right .icon-btn { width: 40px; } }

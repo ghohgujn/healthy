@@ -546,10 +546,12 @@
 
 
   /* ================= v3: tabs ================= */
-  let tab = 'today';
+  let tab = 'today', backTab = 'feed';
   function showTab(name) {
+    if (name === 'chats' && tab !== 'chats') backTab = tab;
     tab = name;
-    for (const t of ['today', 'activity', 'chats', 'profile']) $('#tab-' + t).hidden = t !== name;
+    for (const t of ['today', 'activity', 'feed', 'chats', 'profile']) $('#tab-' + t).hidden = t !== name;
+    $('#inboxBtn').classList.toggle('on', name === 'chats');
     window.HFSocial?.onTab(name);
     document.querySelectorAll('.tabbtn').forEach(b => { if (b.dataset.tab === name) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
     window.scrollTo(0, 0);
@@ -557,6 +559,8 @@
   }
   document.querySelectorAll('.tabbtn').forEach(b => b.onclick = () => showTab(b.dataset.tab));
   $('#avatarBtn').onclick = () => showTab('profile');
+  $('#inboxBtn').onclick = () => showTab('chats');
+  $('#chatsBack').onclick = () => showTab(backTab === 'chats' ? 'feed' : backTab);
   $('#streakChip').onclick = () => showTab('profile');
 
   /* ================= v3: streak ================= */

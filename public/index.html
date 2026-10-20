@@ -27,6 +27,8 @@
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
     <symbol id="i-sliders" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></g></symbol>
     <symbol id="i-camera" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></g></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M10 3.5c.6 3.9 2.6 5.9 6.5 6.5-3.9.6-5.9 2.6-6.5 6.5-.6-3.9-2.6-5.9-6.5-6.5 3.9-.6 5.9-2.6 6.5-6.5zM18 14.5c.3 1.8 1.2 2.7 3 3-1.8.3-2.7 1.2-3 3-.3-1.8-1.2-2.7-3-3 1.8-.3 2.7-1.2 3-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+    <symbol id="i-reply" viewBox="0 0 24 24"><path d="M9.5 7 4 12l5.5 5M4.5 12H14a6 6 0 0 1 6 6v1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 2.4 17.6A2 2 0 0 0 4.1 20.6h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" fill="currentColor" stroke="none"/><path d="M12 9v4.6" stroke="var(--alert-ink, #1a1300)" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="17" r="1.25" fill="var(--alert-ink, #1a1300)"/></symbol>
     <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15zM10 20.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -60,6 +62,7 @@
       <div class="brand"><span class="brand-dot" aria-hidden="true"></span>Healthy Fit</div>
       <div class="top-right">
         <button class="streak-chip" id="streakChip" aria-label="Серия дней"><svg><use href="#i-flame"/></svg><b id="streakNum">0</b></button>
+        <button class="icon-btn inbox-btn" id="inboxBtn" aria-label="Сообщения и друзья"><svg><use href="#i-chat"/></svg><i class="badge" id="chatBadge" hidden></i></button>
         <button class="avatar-btn" id="avatarBtn" aria-label="Профиль"><span class="avatar" id="avatarTop"></span></button>
       </div>
     </header>
@@ -137,15 +140,22 @@
       </div>
     </section>
 
+    <section class="tab" id="tab-feed" hidden aria-labelledby="feedTitle">
+      <h1 class="sr-only" id="feedTitle">Лента</h1>
+      <div class="feed-seg" id="feedSeg" role="radiogroup" aria-label="Лента">
+        <button role="radio" data-scope="all" aria-checked="true">Для вас</button><button role="radio" data-scope="friends" aria-checked="false">Друзья</button>
+      </div>
+      <div id="feedAuth" hidden></div>
+      <div id="feedView" class="feed"></div>
+    </section>
+
     <section class="tab" id="tab-chats" hidden aria-labelledby="chatsTitle">
-      <div class="tab-head"><h1 class="h1" id="chatsTitle">Друзья</h1></div>
+      <div class="tab-head chats-head"><button class="icon-btn" id="chatsBack" aria-label="Назад"><svg><use href="#i-back"/></svg></button><h1 class="h1" id="chatsTitle">Сообщения</h1></div>
       <div id="authBox"></div>
       <div id="socialBox" hidden>
         <div class="push-banner card" id="pushBanner" hidden></div>
         <label class="search"><svg><use href="#i-search"/></svg><input class="input" id="userSearch" type="search" placeholder="Найти по логину или имени" autocomplete="off" enterkeyhint="search"></label>
         <div id="searchResults" hidden></div>
-        <div class="seg chats-seg" id="chatsSeg" role="radiogroup" aria-label="Раздел"><button role="radio" data-view="chats" aria-checked="true">Чаты</button><button role="radio" data-view="feed" aria-checked="false">Лента</button></div>
-        <div id="feedView" class="feed" hidden></div>
         <div id="socialMain">
           <div class="friend-row" id="friendRow" aria-label="Друзья"></div>
           <div id="requests"></div>
@@ -214,7 +224,7 @@
       <button class="tabbtn" data-tab="today" aria-current="page"><svg><use href="#i-home"/></svg><span>Сегодня</span></button>
       <button class="tabbtn" data-tab="activity"><svg><use href="#i-cal"/></svg><span>Активность</span></button>
       <span class="tab-gap" aria-hidden="true"></span>
-      <button class="tabbtn" data-tab="chats"><svg><use href="#i-chat"/></svg><span>Друзья</span><i class="badge" id="chatBadge" hidden></i></button>
+      <button class="tabbtn" data-tab="feed"><svg><use href="#i-spark"/></svg><span>Лента</span></button>
       <button class="tabbtn" data-tab="profile"><svg><use href="#i-user"/></svg><span>Профиль</span></button>
     </nav>
 
@@ -419,6 +429,7 @@
     <div class="scrim" data-close></div>
     <section class="sheet post-sheet" role="dialog" aria-modal="true" aria-label="Публикация">
       <div class="sheet-body post-body" id="postBody"></div>
+      <div class="reply-chip" id="replyChip" hidden><svg aria-hidden="true"><use href="#i-reply"/></svg><span id="replyChipText"></span><button type="button" class="icon-btn" id="replyCancel" aria-label="Отменить ответ"><svg><use href="#i-x"/></svg></button></div>
       <form class="comment-form" id="commentForm">
         <input class="cmp-input" id="commentInput" maxlength="500" placeholder="Комментарий…" autocomplete="off" enterkeyhint="send" aria-label="Комментарий">
         <button class="cmp-btn cmp-main" type="submit" aria-label="Отправить комментарий"><svg><use href="#i-send"/></svg></button>
@@ -434,6 +445,10 @@
       <div class="sheet-body">
         <div class="share-card" id="sharePreview"></div>
         <div class="share-row" id="shareFriends" role="group" aria-label="Друзья"></div>
+        <div class="share-vis" id="shareVis" role="radiogroup" aria-label="Кто увидит публикацию">
+          <span class="field-label">Кто увидит в ленте</span>
+          <div class="seg"><button role="radio" data-vis="public" aria-checked="true"><svg aria-hidden="true"><use href="#i-spark"/></svg>Все</button><button role="radio" data-vis="friends" aria-checked="false"><svg aria-hidden="true"><use href="#i-user"/></svg>Только друзья</button></div>
+        </div>
         <input class="input" id="shareText" maxlength="300" placeholder="Добавить сообщение" autocomplete="off">
       </div>
       <footer class="sheet-foot"><button class="btn btn-primary" id="shareSend" disabled>Отправить</button></footer>

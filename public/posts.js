@@ -64,7 +64,8 @@
           <button class="btn btn-${act[1]} btn-sm" id="uvFriend" ${act[2] ? 'disabled' : ''}>${act[0]}</button>
           ${u.state === 'friends' ? '<button class="btn btn-primary btn-sm" id="uvChat">Написать</button>' : ''}
         </div>
-        <div class="uv-grid">${r.visible ? grid(r.posts, 'Пока нет публикаций') : '<div class="grid-empty"><svg><use href="#i-grid"/></svg><p>Публикации видны только друзьям</p></div>'}</div>`;
+        <div class="uv-grid">${r.posts.length ? grid(r.posts, '') + (!r.visible && u.postsCount > r.posts.length ? '<p class="sub small grid-note">Остальные публикации видят только друзья</p>' : '')
+          : r.visible || !u.postsCount ? grid([], 'Пока нет публикаций') : '<div class="grid-empty"><svg><use href="#i-grid"/></svg><p>Публикации видны только друзьям</p></div>'}</div>`;
       bindGrid($('#uvBody'));
       $('#uvChat')?.addEventListener('click', () => { HF.closeDialog(uv); S().openChat(u); });
       $('#uvFriend').onclick = async () => {
@@ -80,23 +81,34 @@
   $('#uvBack').onclick = () => HF.closeDialog(uv);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !uv.hidden && $('#postSheet').hidden) { e.stopPropagation(); HF.closeDialog(uv); } }, true);
 
-  /* ---------- лента ---------- */
-  let view = 'chats', feedPosts = [], feedEnd = false, feedLoading = false;
-  $('#chatsSeg').querySelectorAll('[data-view]').forEach(b => b.onclick = () => {
-    view = b.dataset.view; $('#chatsSeg').querySelectorAll('[data-view]').forEach(x => x.setAttribute('aria-checked', String(x === b)));
-    $('#feedView').hidden = view !== 'feed'; $('#socialMain').hidden = view !== 'chats';
-    if (view === 'feed') loadFeed(true);
+  /* ---------- лента: «Для вас» (все открытые посты по свежести) и «Друзья» ---------- */
+  let scope = 'all', feedPosts = [], feedEnd = false, feedLoading = false;
+  try { scope = localStorage.getItem('hf.feedScope') || 'all'; } catch {}
+  const segBtns = () => $('#feedSeg').querySelectorAll('[data-scope]');
+  segBtns().forEach(b => {
+    b.setAttribute('aria-checked', String(b.dataset.scope === scope));
+    b.onclick = () => {
+      if (scope === b.dataset.scope) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+      scope = b.dataset.scope; try { localStorage.setItem('hf.feedScope', scope); } catch {}
+      segBtns().forEach(x => x.setAttribute('aria-checked', String(x === b)));
+      loadFeed(true);
+    };
   });
-  $('#userSearch').addEventListener('input', e => {
-    const has = !!e.target.value.trim();
-    $('#chatsSeg').hidden = has; $('#feedView').hidden = has || view !== 'feed'; if (!has) $('#socialMain').hidden = view !== 'chats';
-  });
+  function feedGate() {
+    const me = S().me, gate = $('#feedAuth');
+    gate.hidden = !!me; $('#feedView').hidden = !me;
+    if (!me) gate.innerHTML = `<div class="card auth feed-gate"><svg aria-hidden="true"><use href="#i-spark"/></svg><p class="h2">Лента еды</p>
+      <p class="sub">Смотрите, что едят другие, ставьте лайки и делитесь своими блюдами. Нужен аккаунт — это 20 секунд.</p>
+      <button class="btn btn-primary" id="feedLogin">Войти или создать аккаунт</button></div>`, $('#feedLogin').onclick = () => HF.showTab('chats');
+    return !!me;
+  }
   async function loadFeed(reset) {
-    if (feedLoading || (!reset && feedEnd)) return;
+    if (!feedGate() || feedLoading || (!reset && feedEnd)) return;
     feedLoading = true;
+    if (reset && !feedPosts.length) $('#feedView').innerHTML = '<div class="uv-loading"><div class="scan"></div></div>';
     try {
-      const before = reset || !feedPosts.length ? '' : `?before=${feedPosts[feedPosts.length - 1].id}`;
-      const r = await api('/api/feed' + before);
+      const before = reset || !feedPosts.length ? '' : `&before=${feedPosts[feedPosts.length - 1].id}`;
+      const r = await api(`/api/feed?scope=${scope}${before}`);
       feedPosts = reset ? r.posts : feedPosts.concat(r.posts); feedEnd = r.posts.length < 20;
       renderFeed();
     } catch (e) { $('#feedView').innerHTML = `<p class="sub">${esc(e.message)}</p>`; }
@@ -104,7 +116,7 @@
   }
   function card(p) {
     return `<article class="fcard" data-id="${p.id}">
-      <header class="fc-head"><button class="fc-author" data-user="${p.author.id}">${avaHTML(p.author)}<span><b>${esc(p.author.name)}</b><small>${ago(p.created)}</small></span></button>
+      <header class="fc-head"><button class="fc-author" data-user="${p.author.id}">${avaHTML(p.author)}<span><b>${esc(p.author.name)}</b><small>${ago(p.created)}${p.mine && p.vis === 'friends' ? ' · только друзьям' : ''}</small></span></button>
         ${p.mine ? `<button class="icon-btn fc-del" data-del="${p.id}" aria-label="Удалить публикацию"><svg><use href="#i-trash"/></svg></button>` : ''}</header>
       <div class="fc-photo" data-dbl="${p.id}"><img src="${esc(p.media)}" alt="${esc(p.meta?.title || 'Еда')}" loading="lazy"><i class="fc-burst"><svg><use href="#i-heart"/></svg></i></div>
       <div class="fc-actions">
@@ -119,7 +131,7 @@
   function renderFeed() {
     const box = $('#feedView');
     box.innerHTML = feedPosts.length ? feedPosts.map(card).join('') + (feedEnd ? '' : '<button class="btn btn-ghost feed-more" id="feedMore">Показать ещё</button>')
-      : `<div class="grid-empty"><svg><use href="#i-grid"/></svg><p>В ленте пока пусто. Здесь появятся публикации друзей — и ваши.</p></div>`;
+      : `<div class="grid-empty"><svg><use href="#i-grid"/></svg><p>${scope === 'all' ? 'Пока никто не поделился едой. Будьте первым — сфотографируйте блюдо и нажмите «Поделиться».' : 'Здесь появятся публикации друзей. Найдите друзей через значок сообщений вверху.'}</p></div>`;
     bindCards(box, feedPosts);
     $('#feedMore')?.addEventListener('click', () => loadFeed(false));
   }
@@ -154,28 +166,99 @@
     }, 5000);
   }
 
-  /* ---------- публикация (детально) ---------- */
-  let post = null;
+  /* ---------- публикация (детально) + комментарии как в TikTok ---------- */
+  let post = null, comments = [], replyTo = null;
+  const openThreads = new Set();
   async function openPost(id, focusComment) {
     $('#postBody').innerHTML = '<div class="uv-loading"><div class="scan"></div></div>';
+    setReply(null); openThreads.clear();
     if ($('#postSheet').hidden) HF.openDialog($('#postSheet'), focusComment ? '#commentInput' : '[data-close]:not(.scrim)');
     try {
-      const r = await api(`/api/posts/${id}`); post = r.post;
+      const r = await api(`/api/posts/${id}`); post = r.post; comments = r.comments;
       $('#postBody').innerHTML = `<button class="icon-btn icon-btn-float post-close" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button>
         ${card(post).replace('<article class="fcard"', '<article class="fcard in-sheet"')}
-        <ul class="comments" id="comments">${r.comments.map(commentHTML).join('') || '<li class="sub no-comments">Комментариев пока нет — будьте первым.</li>'}</ul>`;
+        <h3 class="cmt-title" id="cmtTitle"></h3><ul class="comments" id="comments"></ul>`;
       bindCards($('#postBody'), [post]);
-      bindComments();
+      renderComments();
       if (focusComment) $('#commentInput').focus();
     } catch (e) { $('#postBody').innerHTML = `<button class="icon-btn icon-btn-float post-close" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button><p class="sub uv-err">${esc(e.message)}</p>`; }
   }
-  const commentHTML = c => `<li class="cmt" data-cid="${c.id}"><button class="cmt-ava" data-user="${c.author.id}" aria-label="${esc(c.author.name)}">${avaHTML(c.author)}</button>
-    <div><p><b>${esc(c.author.name)}</b> ${esc(c.body)}</p><small>${ago(c.created)}${c.author.id === S().me?.id || post?.mine ? ` · <button class="link-btn cmt-del" data-cdel="${c.id}">удалить</button>` : ''}</small></div></li>`;
+  function commentHTML(c) {
+    const me = S().me, own = c.author.id === me?.id;
+    return `<li class="cmt${c.parent ? ' is-reply' : ''}" data-cid="${c.id}">
+      <span class="cmt-swipe" aria-hidden="true"><svg><use href="#i-reply"/></svg></span>
+      <div class="cmt-row">
+        <button class="cmt-ava" data-user="${c.author.id}" aria-label="Профиль: ${esc(c.author.name)}">${avaHTML(c.author)}</button>
+        <div class="cmt-main" data-tap="${c.id}">
+          <p class="cmt-name">${esc(c.author.name)}${c.author.id === post.author.id ? '<span class="cmt-badge">Автор</span>' : ''}</p>
+          <p class="cmt-text">${c.replyTo && c.parent ? `<span class="cmt-to">@${esc(c.replyTo.username)}</span> ` : ''}${esc(c.body)}</p>
+          <p class="cmt-meta"><span>${ago(c.created)}</span><button class="cmt-act" data-reply="${c.id}">Ответить</button>${own || post.mine ? `<button class="cmt-act" data-cdel="${c.id}">Удалить</button>` : ''}</p>
+        </div>
+        <button class="cmt-like${c.liked ? ' on' : ''}" data-clike="${c.id}" aria-pressed="${c.liked}" aria-label="Нравится комментарий${c.likes ? `, ${c.likes}` : ''}">
+          <svg><use href="#${c.liked ? 'i-heart' : 'i-heart-o'}"/></svg><span>${c.likes || ''}</span></button>
+      </div></li>`;
+  }
+  function renderComments() {
+    const roots = comments.filter(c => !c.parent), box = $('#comments');
+    $('#cmtTitle').textContent = comments.length ? `${comments.length} ${plural(comments.length, 'комментарий', 'комментария', 'комментариев')}` : '';
+    if (!roots.length) { box.innerHTML = '<li class="sub no-comments">Комментариев пока нет — будьте первым.</li>'; return; }
+    box.innerHTML = roots.map(c => {
+      const reps = comments.filter(x => x.parent === c.id), open = openThreads.has(c.id) || reps.length <= 1;
+      return commentHTML(c) + (reps.length ? `<li class="cmt-thread"><ul>${open ? reps.map(commentHTML).join('') : ''}</ul>
+        ${open ? '' : `<button class="cmt-more" data-thread="${c.id}"><i></i>Показать ответы (${reps.length})</button>`}</li>` : '');
+    }).join('');
+    bindComments();
+  }
+  function setReply(c) {
+    replyTo = c;
+    $('#replyChip').hidden = !c;
+    $('#commentInput').placeholder = c ? `Ответ для @${c.author.username}` : 'Комментарий…';
+    if (c) { $('#replyChipText').textContent = `Ответ для ${c.author.name}`; $('#commentInput').focus(); }
+  }
+  $('#replyCancel').onclick = () => setReply(null);
   function bindComments() {
-    $('#comments').querySelectorAll('[data-user]').forEach(b => b.onclick = () => { HF.closeDialog($('#postSheet')); openUser(+b.dataset.user); });
-    $('#comments').querySelectorAll('[data-cdel]').forEach(b => b.onclick = async () => {
-      try { await api(`/api/comments/${b.dataset.cdel}`, { method: 'DELETE' }); b.closest('.cmt').remove(); post.comments--; syncCount(); } catch (e) { HF.toast(e.message); }
+    const box = $('#comments');
+    box.querySelectorAll('[data-user]').forEach(b => b.onclick = e => { e.stopPropagation(); HF.closeDialog($('#postSheet')); openUser(+b.dataset.user); });
+    box.querySelectorAll('[data-reply]').forEach(b => b.onclick = e => { e.stopPropagation(); setReply(comments.find(c => c.id === +b.dataset.reply)); });
+    box.querySelectorAll('[data-thread]').forEach(b => b.onclick = () => { openThreads.add(+b.dataset.thread); renderComments(); });
+    box.querySelectorAll('[data-cdel]').forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      HF.toast('Удалить комментарий?', 'Удалить', async () => {
+        try { const r = await api(`/api/comments/${b.dataset.cdel}`, { method: 'DELETE' });
+          const gone = new Set(r.removed || [+b.dataset.cdel]); comments = comments.filter(c => !gone.has(c.id));
+          post.comments = Math.max(0, post.comments - gone.size); renderComments(); syncCount(); } catch (err) { HF.toast(err.message); }
+      }, 5000);
     });
+    box.querySelectorAll('[data-clike]').forEach(b => b.onclick = async e => {
+      e.stopPropagation();
+      const c = comments.find(x => x.id === +b.dataset.clike), was = c.liked;
+      c.liked = !was; c.likes += was ? -1 : 1; paintCLike(b, c);
+      try { const r = await api(`/api/comments/${c.id}/like`, { method: was ? 'DELETE' : 'POST' }); c.likes = r.likes; c.liked = r.liked; paintCLike(b, c); }
+      catch (err) { c.liked = was; c.likes += was ? 1 : -1; paintCLike(b, c); HF.toast(err.message); }
+    });
+    // тап по комментарию — ответить; свайп влево — тоже ответить (как в TikTok)
+    box.querySelectorAll('.cmt').forEach(li => {
+      const c = comments.find(x => x.id === +li.dataset.cid), row = li.querySelector('.cmt-row');
+      let x0 = 0, y0 = 0, dx = 0, drag = false, moved = false;
+      li.addEventListener('pointerdown', e => { if (e.target.closest('button')) return; x0 = e.clientX; y0 = e.clientY; dx = 0; drag = true; moved = false; });
+      li.addEventListener('pointermove', e => {
+        if (!drag) return;
+        const ddx = e.clientX - x0, ddy = e.clientY - y0;
+        if (!moved && Math.abs(ddy) > 10 && Math.abs(ddy) > Math.abs(ddx)) { drag = false; return; }   // это вертикальная прокрутка
+        if (ddx < -8) { moved = true; dx = Math.max(-84, ddx); row.style.transform = `translateX(${dx}px)`; li.classList.toggle('armed', dx < -56); li.style.setProperty('--sw', Math.min(1, -dx / 56)); }
+      });
+      const end = () => {
+        if (!drag) return; drag = false;
+        row.style.transform = ''; li.style.removeProperty('--sw');
+        if (li.classList.contains('armed')) { li.classList.remove('armed'); try { navigator.vibrate?.(15); } catch {} setReply(c); }
+      };
+      li.addEventListener('pointerup', end); li.addEventListener('pointercancel', end); li.addEventListener('pointerleave', end);
+      li.querySelector('.cmt-main').addEventListener('click', () => { if (!moved) setReply(c); });
+    });
+  }
+  function paintCLike(b, c) {
+    b.classList.toggle('on', c.liked); b.setAttribute('aria-pressed', String(c.liked));
+    b.innerHTML = `<svg><use href="#${c.liked ? 'i-heart' : 'i-heart-o'}"/></svg><span>${c.likes || ''}</span>`;
   }
   function syncCount() {
     const f = feedPosts.find(p => p.id === post.id); if (f) { f.comments = post.comments; if (!$('#feedView').hidden) renderFeed(); }
@@ -184,18 +267,17 @@
   $('#commentForm').onsubmit = async e => {
     e.preventDefault(); if (!post) return;
     const inp = $('#commentInput'), body = inp.value.trim(); if (!body) return;
-    inp.value = '';
+    inp.value = ''; const to = replyTo;
     try {
-      const r = await api(`/api/posts/${post.id}/comments`, { method: 'POST', body: { body } });
-      $('#comments .no-comments')?.remove();
-      $('#comments').insertAdjacentHTML('beforeend', commentHTML(r.comment)); bindComments();
-      post.comments++; syncCount();
-      $('#postBody').scrollTop = $('#postBody').scrollHeight;
+      const r = await api(`/api/posts/${post.id}/comments`, { method: 'POST', body: to ? { body, parent: to.id } : { body } });
+      comments.push(r.comment); if (r.comment.parent) openThreads.add(r.comment.parent);
+      post.comments++; setReply(null); renderComments(); syncCount();
+      const el = $(`#comments [data-cid="${r.comment.id}"]`); el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); el?.classList.add('fresh');
     } catch (err) { inp.value = body; HF.toast(err.message); }
   };
 
   /* ---------- хуки ---------- */
   const prevOnTab = S().onTab;
-  S().onTab = name => { prevOnTab(name); if (name === 'profile') renderOwn(); if (name === 'chats' && view === 'feed') loadFeed(true); };
-  window.HFPosts = { openUser, openPost, refresh() { renderOwn(); if (view === 'feed') loadFeed(true); } };
+  S().onTab = name => { prevOnTab(name); if (name === 'profile') renderOwn(); if (name === 'feed') loadFeed(true); };
+  window.HFPosts = { openUser, openPost, refresh() { renderOwn(); if (!$('#tab-feed').hidden) loadFeed(true); } };
 })();

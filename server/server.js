@@ -47,6 +47,11 @@ CREATE TABLE IF NOT EXISTS health (user_id INTEGER NOT NULL, date TEXT NOT NULL,
   PRIMARY KEY (user_id, date));
 `);
 const q = sql => db.prepare(sql);
+// миграции: добавляем колонки, если их ещё нет
+for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER']])
+  if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${def}`);
+db.exec(`CREATE TABLE IF NOT EXISTS comment_likes (comment_id INTEGER NOT NULL, user_id INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (comment_id, user_id));
+CREATE INDEX IF NOT EXISTS posts_vis ON posts (vis, id);`);
 const now = () => Date.now();
 
 /* ---------------- helpers ---------------- */
@@ -161,14 +166,22 @@ function shapePost(p, me) {
     meta: p.meta ? JSON.parse(p.meta) : null, created: p.created,
     likes: q('SELECT COUNT(*) n FROM likes WHERE post_id = ?').get(p.id).n,
     liked: Boolean(q('SELECT 1 FROM likes WHERE post_id = ? AND user_id = ?').get(p.id, me)),
-    comments: q('SELECT COUNT(*) n FROM comments WHERE post_id = ?').get(p.id).n, mine: p.user_id === me };
+    comments: q('SELECT COUNT(*) n FROM comments WHERE post_id = ?').get(p.id).n, mine: p.user_id === me, vis: p.vis || 'friends' };
 }
+// открытые публикации видят все; закрытые — автор и его друзья
+const canSeePost = (me, p) => p.vis === 'public' || canSee(me, p.user_id);
 function visiblePost(id, me) {
   const p = q('SELECT * FROM posts WHERE id = ?').get(id);
-  if (!p || !canSee(me, p.user_id)) throw fail(404, 'Публикация не найдена');
+  if (!p || !canSeePost(me, p)) throw fail(404, 'Публикация не найдена');
   return p;
 }
-const shapeComment = c => ({ id: c.id, body: c.body, created: c.created, author: pub(q('SELECT * FROM users WHERE id = ?').get(c.user_id)) });
+const shapeComment = (c, me) => {
+  const to = c.reply_to ? q('SELECT id, name, username FROM users WHERE id = ?').get(c.reply_to) : null;
+  return { id: c.id, body: c.body, created: c.created, parent: c.parent_id || null, replyTo: to ? { id: to.id, name: to.name, username: to.username } : null,
+    author: pub(q('SELECT * FROM users WHERE id = ?').get(c.user_id)),
+    likes: q('SELECT COUNT(*) n FROM comment_likes WHERE comment_id = ?').get(c.id).n,
+    liked: Boolean(me && q('SELECT 1 FROM comment_likes WHERE comment_id = ? AND user_id = ?').get(c.id, me)) };
+};
 const USERNAME = /^[a-z0-9_.]{3,20}$/i;
 
 /* ---------------- огонёк дружбы ---------------- */
@@ -282,7 +295,7 @@ async function serveMedia(req, res, id) {
   const isAvatar = q('SELECT 1 FROM users WHERE avatar = ?').get(id);
   const allowed = isAvatar || isAdmin(me) || (me && (m.owner === me.id ||
     q('SELECT 1 FROM messages WHERE media = ? AND (sender = ? OR recipient = ?)').get(id, me.id, me.id) ||
-    q('SELECT user_id FROM posts WHERE media = ?').all(id).some(p => canSee(me.id, p.user_id))));
+    q('SELECT user_id, vis FROM posts WHERE media = ?').all(id).some(p => canSeePost(me.id, p))));
   if (!allowed) { res.writeHead(403); return res.end(); }
   const range = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
   const headers = { 'Content-Type': m.type, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=86400' };
@@ -474,7 +487,7 @@ async function api(req, res, url) {
   if (um && M === 'GET') {
     const u = q('SELECT * FROM users WHERE id = ?').get(Number(um[1])); if (!u) throw fail(404, 'Пользователь не найден');
     const visible = canSee(me.id, u.id);
-    const posts = visible ? q('SELECT * FROM posts WHERE user_id = ? ORDER BY id DESC LIMIT 120').all(u.id).map(p => shapePost(p, me.id)) : [];
+    const posts = q(`SELECT * FROM posts WHERE user_id = ? ${visible ? '' : "AND vis = 'public'"} ORDER BY id DESC LIMIT 120`).all(u.id).map(p => shapePost(p, me.id));
     const friendsCount = q(`SELECT COUNT(*) n FROM friends WHERE (a = ? OR b = ?) AND status = 'accepted'`).get(u.id, u.id).n;
     return send(res, 200, { user: { ...pub(u), state: u.id === me.id ? 'self' : friendState(me.id, u.id), flame: u.id === me.id ? null : flame(me.id, u.id),
       postsCount: q('SELECT COUNT(*) n FROM posts WHERE user_id = ?').get(u.id).n, friendsCount }, posts, visible });
@@ -487,12 +500,14 @@ async function api(req, res, url) {
     const x = b.meta && typeof b.meta === 'object' ? b.meta : {};
     const meta = JSON.stringify({ title: String(x.title || '').slice(0, 80), kcal: num(x.kcal), p: num(x.p), f: num(x.f), c: num(x.c),
       items: (Array.isArray(x.items) ? x.items : []).slice(0, 12).map(i => ({ name: String(i.name || '').slice(0, 40), grams: num(i.grams) })) });
-    const r = q('INSERT INTO posts (user_id, media, caption, meta, created) VALUES (?, ?, ?, ?, ?)').run(me.id, m.id, String(b.caption || '').slice(0, 500), meta, now());
+    const r = q('INSERT INTO posts (user_id, media, caption, meta, created, vis) VALUES (?, ?, ?, ?, ?, ?)').run(me.id, m.id, String(b.caption || '').slice(0, 500), meta, now(), b.vis === 'friends' ? 'friends' : 'public');
     return send(res, 200, { post: shapePost(q('SELECT * FROM posts WHERE id = ?').get(r.lastInsertRowid), me.id) });
   }
   if (p === '/api/feed' && M === 'GET') {
     const before = Number(url.searchParams.get('before') || 9e15);
-    const rows = q(`SELECT * FROM posts WHERE id < ? AND (user_id = ? OR user_id IN (
+    // «Для вас» (scope=all): пока по свежести — все открытые посты + свои + друзей; «Друзья»: только друзья и свои
+    const all = url.searchParams.get('scope') === 'all';
+    const rows = q(`SELECT * FROM posts WHERE id < ? AND (${all ? "vis = 'public' OR " : ''}user_id = ? OR user_id IN (
         SELECT CASE WHEN a = ? THEN b ELSE a END FROM friends WHERE (a = ? OR b = ?) AND status = 'accepted')) ORDER BY id DESC LIMIT 20`)
       .all(before, me.id, me.id, me.id, me.id);
     return send(res, 200, { posts: rows.map(p => shapePost(p, me.id)) });
@@ -501,12 +516,14 @@ async function api(req, res, url) {
   if (pm) {
     const post = visiblePost(Number(pm[1]), me.id);
     if (!pm[2] && M === 'GET') {
-      const comments = q('SELECT * FROM comments WHERE post_id = ? ORDER BY id LIMIT 300').all(post.id).map(shapeComment);
+      const comments = q('SELECT * FROM comments WHERE post_id = ? ORDER BY id LIMIT 500').all(post.id).map(c => shapeComment(c, me.id));
       return send(res, 200, { post: shapePost(post, me.id), comments });
     }
     if (!pm[2] && M === 'DELETE') {
       if (post.user_id !== me.id) throw fail(403, 'Можно удалить только свою публикацию');
-      q('DELETE FROM likes WHERE post_id = ?').run(post.id); q('DELETE FROM comments WHERE post_id = ?').run(post.id);
+      q('DELETE FROM likes WHERE post_id = ?').run(post.id);
+      q('DELETE FROM comment_likes WHERE comment_id IN (SELECT id FROM comments WHERE post_id = ?)').run(post.id);
+      q('DELETE FROM comments WHERE post_id = ?').run(post.id);
       q('DELETE FROM posts WHERE id = ?').run(post.id);
       if (post.media && !q('SELECT 1 FROM messages WHERE media = ?').get(post.media) && !q('SELECT 1 FROM posts WHERE media = ?').get(post.media) && !q('SELECT 1 FROM users WHERE avatar = ?').get(post.media)) {
         q('DELETE FROM media WHERE id = ?').run(post.media); await unlink(join(MEDIA, post.media)).catch(() => {});
@@ -521,19 +538,39 @@ async function api(req, res, url) {
     }
     if (pm[2] === '/comments' && M === 'POST') {
       rate('comment:' + me.id, 120, 3_600_000);
-      const body = String((await json(req, 8_000)).body || '').trim().slice(0, 500);
+      const b = await json(req, 8_000);
+      const body = String(b.body || '').trim().slice(0, 500);
       if (!body) throw fail(400, 'Пустой комментарий');
-      const r = q('INSERT INTO comments (post_id, user_id, body, created) VALUES (?, ?, ?, ?)').run(post.id, me.id, body, now());
-      if (post.user_id !== me.id) notify(post.user_id, { title: `${me.name} прокомментировал(а)`, body: body.slice(0, 120), url: `/?post=${post.id}`, tag: `post-${post.id}` });
-      return send(res, 200, { comment: shapeComment(q('SELECT * FROM comments WHERE id = ?').get(r.lastInsertRowid)) });
+      // ответ: храним корневой комментарий (одна ветка, как в TikTok) и кому отвечаем
+      let parent = null, replyTo = null;
+      if (b.parent) {
+        const pc = q('SELECT * FROM comments WHERE id = ? AND post_id = ?').get(Number(b.parent), post.id);
+        if (!pc) throw fail(404, 'Комментарий не найден');
+        parent = pc.parent_id || pc.id; replyTo = pc.user_id;
+      }
+      const r = q('INSERT INTO comments (post_id, user_id, body, created, parent_id, reply_to) VALUES (?, ?, ?, ?, ?, ?)').run(post.id, me.id, body, now(), parent, replyTo);
+      if (replyTo && replyTo !== me.id) notify(replyTo, { title: `${me.name} ответил(а) вам`, body: body.slice(0, 120), url: `/?post=${post.id}`, tag: `post-${post.id}` });
+      if (post.user_id !== me.id && post.user_id !== replyTo) notify(post.user_id, { title: `${me.name} прокомментировал(а)`, body: body.slice(0, 120), url: `/?post=${post.id}`, tag: `post-${post.id}` });
+      return send(res, 200, { comment: shapeComment(q('SELECT * FROM comments WHERE id = ?').get(r.lastInsertRowid), me.id) });
     }
+  }
+  const cl = /^\/api\/comments\/(\d+)\/like$/.exec(p);
+  if (cl) {
+    rate('clike:' + me.id, 300, 3_600_000);
+    const c = q('SELECT * FROM comments WHERE id = ?').get(Number(cl[1])); if (!c) throw fail(404, 'Комментарий не найден');
+    visiblePost(c.post_id, me.id);
+    if (M === 'POST') q('INSERT OR IGNORE INTO comment_likes (comment_id, user_id, created) VALUES (?, ?, ?)').run(c.id, me.id, now());
+    else if (M === 'DELETE') q('DELETE FROM comment_likes WHERE comment_id = ? AND user_id = ?').run(c.id, me.id);
+    return send(res, 200, { likes: q('SELECT COUNT(*) n FROM comment_likes WHERE comment_id = ?').get(c.id).n, liked: M === 'POST' });
   }
   const dc = /^\/api\/comments\/(\d+)$/.exec(p);
   if (dc && M === 'DELETE') {
     const c = q('SELECT c.*, p.user_id AS owner FROM comments c JOIN posts p ON p.id = c.post_id WHERE c.id = ?').get(Number(dc[1]));
     if (!c || (c.user_id !== me.id && c.owner !== me.id)) throw fail(404, 'Комментарий не найден');
-    q('DELETE FROM comments WHERE id = ?').run(c.id);
-    return send(res, 200, { ok: true });
+    // удаляем комментарий вместе с ответами на него и лайками
+    const ids = [c.id, ...q('SELECT id FROM comments WHERE parent_id = ?').all(c.id).map(x => x.id)];
+    for (const id of ids) { q('DELETE FROM comment_likes WHERE comment_id = ?').run(id); q('DELETE FROM comments WHERE id = ?').run(id); }
+    return send(res, 200, { ok: true, removed: ids });
   }
   if (p === '/api/users' && M === 'GET') {
     rate('search:' + me.id, 60, 60_000);
