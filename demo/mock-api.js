@@ -28,7 +28,7 @@ window.HFMockApi = (() => {
       if (rs) { const f = users.find(x => x.id === +rs[1]); if (!f.flame.canRestore) throw new Error('Огонёк уже восстанавливали — второй раз нельзя'); f.flame = { count: f.flame.count + 1, state: 'risk', canRestore: false }; return { flame: f.flame }; }
       const fm = /^\/api\/friends\/(\d+)$/.exec(p);
       if (fm) { const id = +fm[1]; st.fr[id] = M === 'DELETE' ? 'none' : st.fr[id] === 'incoming' ? 'friends' : st.fr[id] === 'friends' ? 'friends' : 'friends'; return { state: st.fr[id] }; }
-      if (p === '/api/media') { const id = 'demo' + (++st.id); st.media[id] = URL.createObjectURL(o.body); return { id, url: st.media[id] }; }
+      if (p === '/api/media') { const id = 'demo' + (++st.id); st.media[id] = o.body instanceof Blob ? URL.createObjectURL(o.body) : body.data; return { id, url: st.media[id] }; }
       if (p === '/api/chats') {
         const peers = [...new Set(st.msgs.map(m => m.from === 1 ? m.to : m.from))];
         const chats = peers.map(pid => { const ms = st.msgs.filter(m => m.from === pid || m.to === pid); return { peer: users.find(x => x.id === pid), last: ms[ms.length - 1], unread: ms.filter(m => m.from === pid && !m.read).length }; })

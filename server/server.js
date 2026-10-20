@@ -8,6 +8,7 @@ import { join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { loadVapid, sendPush } from './push.js';
 
 const ROOT = fileURLToPath(new URL('../public/', import.meta.url));
 const DATA = process.env.DATA_DIR || fileURLToPath(new URL('../data/', import.meta.url));
@@ -38,6 +39,8 @@ CREATE TABLE IF NOT EXISTS likes (post_id INTEGER NOT NULL REFERENCES posts(id) 
 CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY, post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE, user_id INTEGER NOT NULL, body TEXT NOT NULL, created INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS comments_post ON comments (post_id, id);
 CREATE TABLE IF NOT EXISTS flame_restores (a INTEGER NOT NULL, b INTEGER NOT NULL, day TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (a, b));
+CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY, user_id INTEGER NOT NULL, p256dh TEXT NOT NULL, auth TEXT NOT NULL, created INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS push_user ON push_subs (user_id);
 CREATE TABLE IF NOT EXISTS health (user_id INTEGER NOT NULL, date TEXT NOT NULL, steps INTEGER, active_kcal INTEGER, source TEXT, updated INTEGER NOT NULL,
   PRIMARY KEY (user_id, date));
 `);
@@ -102,6 +105,22 @@ const friendState = (me, other) => {
 };
 const areFriends = (a, b) => friendState(a, b) === 'friends';
 const canSee = (me, author) => me === author || areFriends(me, author);
+
+/* ---------------- пуш-уведомления ---------------- */
+const VAPID = loadVapid(DATA);
+const PUSH_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:healthyfit.app@gmail.com';
+const PUSH_HOSTS = /(^|\.)(push\.apple\.com|fcm\.googleapis\.com|googleapis\.com|push\.services\.mozilla\.com|notify\.windows\.com)$/;
+const chatOpen = new Map();   // "кто:с кем" → когда последний раз опрашивал открытый чат
+function notify(userId, data, skipIfChat) {
+  if (skipIfChat && now() - (chatOpen.get(`${userId}:${skipIfChat}`) || 0) < 8000) return;   // чат открыт — пуш не нужен
+  for (const sub of q('SELECT * FROM push_subs WHERE user_id = ?').all(userId)) {
+    sendPush(VAPID, sub, data, PUSH_SUBJECT).then(code => {
+      if (code === 404 || code === 410 || code === 403) q('DELETE FROM push_subs WHERE endpoint = ?').run(sub.endpoint);
+    });
+  }
+}
+const msgText = (kind, body, meta) => kind === 'text' ? body.slice(0, 120) : kind === 'meal' ? `🍽 ${meta?.title || 'Блюдо'}${meta?.kcal ? ` · ${Math.round(meta.kcal)} ккал` : ''}`
+  : kind === 'voice' ? '🎤 Голосовое сообщение' : kind === 'video' ? '📹 Видеосообщение' : '📷 Фото';
 
 /* ---------------- публикации ---------------- */
 function shapePost(p, me) {
@@ -201,15 +220,23 @@ async function analyze(req, res) {
 
 /* ---------------- media ---------------- */
 const MEDIA_TYPES = {
-  'image/jpeg': { ext: '.jpg', max: 3e6 }, 'image/webp': { ext: '.webp', max: 3e6 },
-  'audio/webm': { ext: '.webm', max: 3e6 }, 'audio/mp4': { ext: '.m4a', max: 3e6 }, 'audio/ogg': { ext: '.ogg', max: 3e6 },
+  'image/jpeg': { ext: '.jpg', max: 3e6 }, 'image/webp': { ext: '.webp', max: 3e6 }, 'image/png': { ext: '.png', max: 3e6 },
+  'audio/webm': { ext: '.webm', max: 3e6 }, 'audio/mp4': { ext: '.m4a', max: 3e6 }, 'audio/ogg': { ext: '.ogg', max: 3e6 }, 'audio/aac': { ext: '.aac', max: 3e6 },
   'video/webm': { ext: '.webm', max: 25e6 }, 'video/mp4': { ext: '.mp4', max: 25e6 },
 };
 async function upload(req, res, me) {
   rate('up:' + me.id, 60, 600_000);
-  const type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  let type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase(), buf;
+  if (type === 'application/json') {
+    // картинки с телефона приходят data:URL в JSON — так надёжнее в Safari, чем Blob в теле запроса
+    const m = /^data:([a-z]+\/[a-z0-9.+-]+);base64,(.+)$/s.exec(String((await json(req, 6_000_000)).data || ''));
+    if (!m) throw fail(400, 'Нужен файл');
+    type = m[1].toLowerCase(); buf = Buffer.from(m[2], 'base64');
+    if (!MEDIA_TYPES[type]) throw fail(415, 'Неподдерживаемый формат');
+    if (buf.length > MEDIA_TYPES[type].max) throw fail(413, 'Слишком большой файл');
+  }
   const spec = MEDIA_TYPES[type]; if (!spec) throw fail(415, 'Неподдерживаемый формат');
-  const buf = await readBody(req, spec.max);
+  if (!buf) buf = await readBody(req, spec.max);
   if (buf.length < 100) throw fail(400, 'Пустой файл');
   const id = randomBytes(16).toString('hex') + spec.ext;
   await writeFile(join(MEDIA, id), buf);
@@ -322,7 +349,32 @@ async function api(req, res, url) {
     return send(res, 200, { ok: true }, { 'Set-Cookie': `hf=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${SECURE ? '; Secure' : ''}` });
   }
 
+  if (p === '/api/clientlog' && M === 'POST') {
+    rate('clog:' + ipOf(req), 30, 600_000);
+    const b = await json(req, 8_000), u = userOf(req);
+    console.error('client', u ? '@' + u.username : 'anon', String(b.where || '').slice(0, 40), String(b.error || '').slice(0, 300), String(req.headers['user-agent'] || '').slice(0, 120));
+    return send(res, 200, { ok: true });
+  }
+  if (p === '/api/push/key' && M === 'GET') return send(res, 200, { key: VAPID.publicKey });
   const me = need(req);
+  if (p === '/api/push/subscribe' && M === 'POST') {
+    const b = await json(req, 8_000), ep = String(b.endpoint || ''), k = b.keys || {};
+    let host = ''; try { const u = new URL(ep); if (u.protocol === 'https:') host = u.hostname; } catch {}
+    if (!PUSH_HOSTS.test(host) || !k.p256dh || !k.auth) throw fail(400, 'Неверная подписка');
+    q(`INSERT INTO push_subs (endpoint, user_id, p256dh, auth, created) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth`).run(ep, me.id, String(k.p256dh), String(k.auth), now());
+    return send(res, 200, { ok: true });
+  }
+  if (p === '/api/push/unsubscribe' && M === 'POST') {
+    const b = await json(req, 8_000); q('DELETE FROM push_subs WHERE endpoint = ? AND user_id = ?').run(String(b.endpoint || ''), me.id);
+    return send(res, 200, { ok: true });
+  }
+  if (p === '/api/push/test' && M === 'POST') {
+    rate('ptest:' + me.id, 10, 600_000);
+    const n = q('SELECT COUNT(*) n FROM push_subs WHERE user_id = ?').get(me.id).n;
+    notify(me.id, { title: 'Healthy Fit', body: 'Уведомления работают 👍', url: '/', tag: 'test' });
+    return send(res, 200, { devices: n });
+  }
   if (p === '/api/me' && M === 'GET') return send(res, 200, { me: { ...pub(me), healthToken: me.health_token } });
   if (p === '/api/me' && M === 'PATCH') {
     const b = await json(req, 32_000);
@@ -422,6 +474,7 @@ async function api(req, res, url) {
       const body = String((await json(req, 8_000)).body || '').trim().slice(0, 500);
       if (!body) throw fail(400, 'Пустой комментарий');
       const r = q('INSERT INTO comments (post_id, user_id, body, created) VALUES (?, ?, ?, ?)').run(post.id, me.id, body, now());
+      if (post.user_id !== me.id) notify(post.user_id, { title: `${me.name} прокомментировал(а)`, body: body.slice(0, 120), url: `/?post=${post.id}`, tag: `post-${post.id}` });
       return send(res, 200, { comment: shapeComment(q('SELECT * FROM comments WHERE id = ?').get(r.lastInsertRowid)) });
     }
   }
@@ -455,8 +508,13 @@ async function api(req, res, url) {
     const a = Math.min(me.id, other), b = Math.max(me.id, other), st = friendState(me.id, other);
     if (M === 'POST') {
       rate('friend:' + me.id, 60, 3_600_000);
-      if (st === 'none') q('INSERT INTO friends (a, b, status, created) VALUES (?, ?, ?, ?)').run(a, b, `pending:${me.id}`, now());
-      else if (st === 'incoming') q(`UPDATE friends SET status = 'accepted' WHERE a = ? AND b = ?`).run(a, b);
+      if (st === 'none') {
+        q('INSERT INTO friends (a, b, status, created) VALUES (?, ?, ?, ?)').run(a, b, `pending:${me.id}`, now());
+        notify(other, { title: 'Заявка в друзья', body: `${me.name} (@${me.username}) хочет добавить вас в друзья`, url: '/?tab=chats', tag: `friend-${me.id}` });
+      } else if (st === 'incoming') {
+        q(`UPDATE friends SET status = 'accepted' WHERE a = ? AND b = ?`).run(a, b);
+        notify(other, { title: 'Новый друг', body: `${me.name} принял(а) вашу заявку`, url: `/?user=${me.id}`, tag: `friend-${me.id}` });
+      }
       return send(res, 200, { state: friendState(me.id, other) });
     }
     if (M === 'DELETE') { q('DELETE FROM friends WHERE a = ? AND b = ?').run(a, b); return send(res, 200, { state: 'none' }); }
@@ -484,6 +542,7 @@ async function api(req, res, url) {
   if (cm) {
     const other = Number(cm[1]);
     if (M === 'GET') {
+      chatOpen.set(`${me.id}:${other}`, now());
       const after = Number(url.searchParams.get('after') || 0);
       const rows = q(`SELECT * FROM messages WHERE ((sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)) AND id > ? ORDER BY id DESC LIMIT 200`)
         .all(me.id, other, other, me.id, after).reverse();
@@ -514,6 +573,7 @@ async function api(req, res, url) {
       }
       const r = q('INSERT INTO messages (sender, recipient, kind, body, media, meta, created) VALUES (?, ?, ?, ?, ?, ?, ?)')
         .run(me.id, other, kind, body, media, meta, now());
+      notify(other, { title: me.name, body: msgText(kind, body, meta && JSON.parse(meta)), url: `/?chat=${me.id}`, tag: `chat-${me.id}` }, me.id);
       return send(res, 200, { message: shapeMsg(q('SELECT * FROM messages WHERE id = ?').get(r.lastInsertRowid)) });
     }
   }

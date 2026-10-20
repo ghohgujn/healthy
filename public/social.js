@@ -14,13 +14,28 @@
   async function api(path, opts = {}) {
     if (mock) return mock(path, opts);
     const o ={ method: opts.method || 'GET', headers: {}, credentials: 'same-origin' };
-    if (opts.body instanceof Blob) { o.body = opts.body; o.headers['Content-Type'] = opts.body.type; }
+    // Safari иногда рвёт запрос с Blob в теле («Load failed») — отправляем байтами
+    if (opts.body instanceof Blob) { o.body = new Uint8Array(await opts.body.arrayBuffer()); o.headers['Content-Type'] = (opts.body.type || 'application/octet-stream').split(';')[0]; }
     else if (opts.body !== undefined) { o.body = typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body); o.headers['Content-Type'] = 'application/json'; }
-    const r = await fetch(path, o);
+    let r;
+    for (let attempt = 0; ; attempt++) {
+      try { r = await fetch(path, o); break; }
+      catch (e) {
+        if (attempt < 1 && (o.method === 'GET' || path === '/api/media')) { await new Promise(res => setTimeout(res, 800)); continue; }
+        logError(path, e);
+        throw Object.assign(new Error('Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.'), { network: true });
+      }
+    }
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw Object.assign(new Error(data.error || 'Нет связи с сервером'), { status: r.status });
     return data;
   }
+  function logError(where, e) {
+    try { fetch('/api/clientlog', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', keepalive: true,
+      body: JSON.stringify({ where, error: `${e?.name || ''}: ${e?.message || e}` }) }).catch(() => {}); } catch {}
+  }
+  // фото (data:URL) → сервер JSON-ом: работает одинаково во всех браузерах
+  const uploadImage = dataUrl => api('/api/media', { method: 'POST', body: { data: dataUrl } });
   const ava = (el, u) => {
     if (u?.avatar) { el.style.backgroundImage = `url("${u.avatar}")`; el.textContent = ''; }
     else { el.style.backgroundImage = ''; el.textContent = (u?.name || '?').trim().charAt(0).toUpperCase(); }
@@ -43,7 +58,8 @@
     if (DEMO) { try { me = (await api('/api/me')).me; } catch { me = null; } renderAuth(); renderAccountCard(); renderHealthCard(); if (me) refreshSocial(); return; }
     try { me = (await api('/api/me')).me; } catch { me = null; }
     renderAuth(); renderAccountCard(); renderHealthCard();
-    if (me) { refreshSocial(); pullHealth(); restoreIfEmpty(); }
+    if (me) { await refreshSocial(); pullHealth(); restoreIfEmpty(); syncPush(); route(); }
+    renderPushUI();
   }
   function renderAuth() {
     $('#socialBox').hidden = !me;
@@ -88,7 +104,7 @@
     if (!me) return;
     const p = HF.db.profile, body = { name: p.name || me.name, stats: stats() };
     if (p.avatar && !me.avatar) {
-      try { const blob = await (await fetch(p.avatar)).blob(); const up = await api('/api/media', { method: 'POST', body: blob }); body.avatar = up.id; } catch {}
+      try { body.avatar = (await uploadImage(p.avatar)).id; } catch (e) { logError('avatar', e); }
     }
     try { me = { ...me, ...(await api('/api/me', { method: 'PATCH', body })).me }; } catch {}
   }
@@ -105,7 +121,9 @@
       <button class="btn btn-ghost btn-sm" id="logoutBtn">Выйти</button></div>
       <label class="field"><span class="field-label">Короткое имя — по нему вас находят друзья</span>
         <span class="uname"><span>@</span><input class="input" id="unameInput" maxlength="20" autocapitalize="none" spellcheck="false" autocomplete="username" value="${esc(me.username)}"></span></label>
-      <p class="sub small" id="unameHint"></p>`;
+      <p class="sub small" id="unameHint"></p>
+      <div class="push-row" id="pushRow"></div>`;
+    renderPushUI();
     const ui = $('#unameInput');
     ui.addEventListener('input', () => checkName(ui.value, $('#unameHint'), me.username));
     ui.addEventListener('change', async () => {
@@ -113,7 +131,7 @@
       try { me = { ...me, ...(await api('/api/me', { method: 'PATCH', body: { username: v } })).me }; HF.toast(`Теперь вы @${me.username}`); $('#unameHint').textContent = ''; }
       catch (e) { HF.toast(e.message); ui.value = me.username; $('#unameHint').textContent = ''; }
     });
-    $('#logoutBtn').onclick = async () => { try { await api('/api/auth/logout', { method: 'POST' }); } catch {} me = null; boot(); HF.toast('Вы вышли'); };
+    $('#logoutBtn').onclick = async () => { await dropPush(); try { await api('/api/auth/logout', { method: 'POST' }); } catch {} me = null; boot(); HF.toast('Вы вышли'); };
   }
 
   let checkT;
@@ -132,7 +150,7 @@
   $('#nameInput')?.addEventListener('change', schedulePush);
   $('#avatarInput')?.addEventListener('change', () => setTimeout(async () => {
     if (!me || !HF.db.profile.avatar) return;
-    try { const blob = await (await fetch(HF.db.profile.avatar)).blob(); const up = await api('/api/media', { method: 'POST', body: blob });
+    try { const up = await uploadImage(HF.db.profile.avatar);
       me = (await api('/api/me', { method: 'PATCH', body: { avatar: up.id } })).me; } catch {}
   }, 600));
 
@@ -222,16 +240,31 @@
   }
 
   /* ================= friends & inbox ================= */
+  let prevUnread = null, prevIncoming = null;
   async function refreshSocial() {
     if (!me) return;
     try {
       const [f, c] = await Promise.all([api('/api/friends'), api('/api/chats')]);
       friends = f.friends; incoming = f.incoming; sent = f.sent; chats = c.chats;
-      const b = $('#chatBadge'); b.hidden = !(c.unreadTotal + incoming.length); b.textContent = c.unreadTotal + incoming.length;
+      const total = c.unreadTotal + incoming.length;
+      const b = $('#chatBadge'); b.hidden = !total; b.textContent = total;
+      document.title = total ? `(${total}) Healthy Fit` : 'Healthy Fit';
+      try { if (navigator.setAppBadge) total ? navigator.setAppBadge(total) : navigator.clearAppBadge(); } catch {}
+      // всплывашка о новом, пока приложение открыто
+      if (prevUnread) {
+        const fresh = c.chats.filter(x => x.unread > (prevUnread[x.peer.id] || 0) && !(peer && peer.id === x.peer.id && !chatEl.hidden));
+        if (fresh.length) {
+          const x = fresh[0];
+          HF.toast(`${x.peer.name}: ${preview(x.last)}`.slice(0, 90), 'Открыть', () => openChat(x.peer), 6000);
+          try { navigator.vibrate?.(60); } catch {}
+        } else if (prevIncoming != null && incoming.length > prevIncoming) HF.toast(`${incoming[incoming.length - 1].name} хочет добавить вас в друзья`, 'Открыть', () => HF.showTab('chats'), 6000);
+      }
+      prevUnread = Object.fromEntries(c.chats.map(x => [x.peer.id, x.unread])); prevIncoming = incoming.length;
       if (tab === 'chats') renderInbox();
     } catch (e) { if (e.status === 401) { me = null; boot(); } }
   }
-  setInterval(() => { if (me && !document.hidden && $('#chat').hidden) refreshSocial(); }, 15000);
+  setInterval(() => { if (me && !document.hidden) refreshSocial(); }, 15000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && me) { refreshSocial(); if (window.HFPushSync) window.HFPushSync(); } });
 
   function renderInbox() {
     const row = $('#friendRow');
@@ -547,7 +580,7 @@
     const btn = $('#shareSend'); btn.disabled = true; btn.textContent = 'Отправляю…';
     try {
       let media;
-      if (d.thumb) { const blob = await (await fetch(d.thumb)).blob(); media = (await api('/api/media', { method: 'POST', body: blob })).id; }
+      if (d.thumb) media = (await uploadImage(d.thumb)).id;
       const meta = { title: d.name, kcal: d.totals.kcal, p: d.totals.p, f: d.totals.f, c: d.totals.c, items: d.items.map(i => ({ name: i.name, grams: i.grams })) };
       const body = $('#shareText').value.trim();
       if (toProfile && media) await api('/api/posts', { method: 'POST', body: { media, caption: body, meta } });
@@ -555,8 +588,111 @@
       HF.closeDialog($('#shareSheet'));
       HF.toast(toProfile && picked.size ? `Опубликовано и отправлено ${picked.size}` : toProfile ? 'Опубликовано в профиле' : picked.size > 1 ? `Отправлено ${picked.size} друзьям` : 'Отправлено');
       refreshSocial(); window.HFPosts?.refresh();
-    } catch (e) { HF.toast(e.message); updShare(); }
+    } catch (e) { if (!e.network) logError('share', e); HF.toast(e.message); updShare(); }
   };
+
+  /* ================= пуш-уведомления ================= */
+  const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  let swReg = null;
+  if ('serviceWorker' in navigator && !mock) {
+    navigator.serviceWorker.register('/sw.js').then(r => { swReg = r; }).catch(e => logError('sw', e));
+    navigator.serviceWorker.addEventListener('message', e => {
+      if (e.data?.type === 'push') refreshSocial();
+      if (e.data?.type === 'open') route(e.data.url);
+    });
+  }
+  const b64uToBytes = s => { const b = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)); return Uint8Array.from(b, c => c.charCodeAt(0)); };
+  const swReady = () => swReg ? Promise.resolve(swReg) : Promise.race([navigator.serviceWorker.ready, new Promise((_, rej) => setTimeout(() => rej(new Error('service worker не запустился')), 8000))]);
+  async function pushStatus() {
+    if (mock) return 'off';
+    if (!pushSupported) return isIOS && !standalone ? 'ios-install' : 'unsupported';
+    if (Notification.permission === 'denied') return 'denied';
+    if (Notification.permission !== 'granted') return 'off';
+    try { const sub = await (await swReady()).pushManager.getSubscription(); return sub ? 'on' : 'off'; } catch { return 'off'; }
+  }
+  async function enablePush() {
+    if (mock) { HF.toast('В превью уведомления не работают — только на сервере'); return; }
+    if (!pushSupported) { showPushHelp(isIOS && !standalone ? 'ios-install' : 'unsupported'); return; }
+    const perm = await Notification.requestPermission();   // первым же действием — иначе iOS не покажет запрос
+    if (perm !== 'granted') { if (perm === 'denied') showPushHelp('denied'); else HF.toast('Уведомления не включены'); renderPushUI(); return; }
+    try {
+      const reg = await swReady(), { key } = await api('/api/push/key');
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(key) });
+      await api('/api/push/subscribe', { method: 'POST', body: sub.toJSON() });
+      HF.toast('Уведомления включены 🔔');
+    } catch (e) { logError('push-subscribe', e); HF.toast('Не удалось включить уведомления: ' + e.message); }
+    renderPushUI();
+  }
+  // при каждом входе напоминаем серверу о подписке этого устройства (после смены аккаунта, переустановки и т.п.)
+  async function syncPush() {
+    if (!me || mock || !pushSupported || Notification.permission !== 'granted') return;
+    try { const sub = await (await swReady()).pushManager.getSubscription(); if (sub) await api('/api/push/subscribe', { method: 'POST', body: sub.toJSON() }); } catch {}
+  }
+  window.HFPushSync = syncPush;
+  async function dropPush() {
+    if (mock || !pushSupported) return;
+    try { const sub = await (await swReady()).pushManager.getSubscription(); if (sub) await api('/api/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } }); } catch {}
+  }
+  function showPushHelp(kind) {
+    const steps = kind === 'ios-install'
+      ? `<p class="sub">На iPhone уведомления приходят только в приложение с экрана «Домой» (iOS 16.4 и новее).</p>
+         <ol class="steps"><li>В Safari нажмите <b>«Поделиться»</b> — квадрат со стрелкой внизу экрана.</li>
+         <li>Выберите <b>«На экран „Домой“»</b> → «Добавить».</li>
+         <li>Откройте <b>Healthy Fit</b> с иконки и войдите в аккаунт — дневник подтянется из облака.</li>
+         <li>Вкладка «Друзья» → <b>«Включить уведомления»</b> → «Разрешить».</li></ol>`
+      : kind === 'denied'
+      ? `<p class="sub">Уведомления запрещены для этого сайта. Разрешите их:</p>
+         <ol class="steps"><li><b>iPhone:</b> Настройки → Уведомления → Healthy Fit → Допуск уведомлений.</li>
+         <li><b>Android (Chrome):</b> значок замка слева от адреса → Разрешения → Уведомления → Разрешить.</li>
+         <li>Вернитесь сюда и нажмите «Включить уведомления» ещё раз.</li></ol>`
+      : `<p class="sub">Этот браузер не умеет получать уведомления. Откройте сайт в Chrome (Android) или добавьте на экран «Домой» в Safari (iPhone).</p>`;
+    $('#pushHelpBody').innerHTML = steps;
+    HF.openDialog($('#pushSheet'));
+  }
+  async function renderPushUI() {
+    const st = await pushStatus();
+    const label = { on: 'Включены на этом устройстве', off: 'Выключены', denied: 'Запрещены в настройках', 'ios-install': 'Нужно добавить на экран «Домой»', unsupported: 'Браузер не поддерживает' }[st];
+    const row = $('#pushRow');
+    if (row) {
+      row.innerHTML = `<div><b>Уведомления</b><p class="sub small">${label}</p></div>` + (st === 'on'
+        ? '<button class="btn btn-ghost btn-sm" id="pushTest">Проверить</button>'
+        : `<button class="btn btn-primary btn-sm" id="pushOn">${st === 'off' ? 'Включить' : 'Как включить'}</button>`);
+      $('#pushOn')?.addEventListener('click', enablePush);
+      $('#pushTest')?.addEventListener('click', async () => { try { const r = await api('/api/push/test', { method: 'POST' }); HF.toast(r.devices ? 'Отправили тестовое уведомление' : 'Устройство не подписано — нажмите «Включить»'); } catch (e) { HF.toast(e.message); } });
+    }
+    const ban = $('#pushBanner');
+    if (ban) {
+      let dismissed = false; try { dismissed = localStorage.getItem('hf.pushBanner') === 'off'; } catch {}
+      ban.hidden = !me || st === 'on' || st === 'unsupported' || dismissed;
+      if (!ban.hidden) {
+        ban.innerHTML = `<svg aria-hidden="true"><use href="#i-bell"/></svg><div><b>Не пропускайте сообщения</b><p class="sub small">${st === 'ios-install' ? 'Добавьте Healthy Fit на экран «Домой» — тогда придут уведомления' : 'Включите уведомления о сообщениях и заявках'}</p></div>
+          <button class="btn btn-primary btn-sm" id="pushBanOn">${st === 'off' ? 'Включить' : 'Как'}</button><button class="icon-btn" id="pushBanX" aria-label="Скрыть"><svg><use href="#i-x"/></svg></button>`;
+        $('#pushBanOn').onclick = enablePush;
+        $('#pushBanX').onclick = () => { try { localStorage.setItem('hf.pushBanner', 'off'); } catch {} ban.hidden = true; };
+      }
+    }
+  }
+
+  // ссылки из уведомлений: /?chat=ID, /?user=ID, /?post=ID, /?tab=chats
+  async function route(href) {
+    if (!me) return;
+    const u = new URL(href || location.href, location.origin), p = u.searchParams;
+    if (![...p.keys()].some(k => ['chat', 'user', 'post', 'tab'].includes(k))) return;
+    try { history.replaceState(null, '', '/'); } catch {}
+    try {
+      if (p.get('tab')) HF.showTab(p.get('tab'));
+      if (p.get('chat')) {
+        const id = +p.get('chat'); HF.showTab('chats');
+        const f = friends.find(x => x.id === id) || (await api(`/api/users/${id}`)).user;
+        if (!(peer && peer.id === id && !chatEl.hidden)) { if (!chatEl.hidden) closeChat(); openChat(f); }
+      }
+      if (p.get('user')) window.HFPosts?.openUser(+p.get('user'));
+      if (p.get('post')) window.HFPosts?.openPost(+p.get('post'), true);
+    } catch (e) { HF.toast(e.message); }
+  }
 
   /* ================= hooks ================= */
   $('#chatAva').onclick = $('#chatName').onclick = () => { if (peer) window.HFPosts?.openUser(peer.id); };

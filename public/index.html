@@ -27,6 +27,7 @@
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
     <symbol id="i-sliders" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></g></symbol>
     <symbol id="i-camera" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></g></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15zM10 20.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-image" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5"/></g></symbol>
     <symbol id="i-flash" viewBox="0 0 24 24"><path d="M13 2L5 14h6l-1 8 8-12h-6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
@@ -139,6 +140,7 @@
       <div class="tab-head"><h1 class="h1" id="chatsTitle">Друзья</h1></div>
       <div id="authBox"></div>
       <div id="socialBox" hidden>
+        <div class="push-banner card" id="pushBanner" hidden></div>
         <label class="search"><svg><use href="#i-search"/></svg><input class="input" id="userSearch" type="search" placeholder="Найти по логину или имени" autocomplete="off" enterkeyhint="search"></label>
         <div id="searchResults" hidden></div>
         <div class="seg chats-seg" id="chatsSeg" role="radiogroup" aria-label="Раздел"><button role="radio" data-view="chats" aria-checked="true">Чаты</button><button role="radio" data-view="feed" aria-checked="false">Лента</button></div>
@@ -370,6 +372,13 @@
   </div>
 
   <!-- Post -->
+  <div class="sheet-wrap" id="pushSheet" hidden>
+    <div class="scrim" data-close></div>
+    <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="pushHelpTitle">
+      <div class="sheet-head"><h2 class="h2" id="pushHelpTitle">Как включить уведомления</h2><button class="icon-btn" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button></div>
+      <div class="sheet-body" id="pushHelpBody"></div>
+    </section>
+  </div>
   <div class="sheet-wrap" id="postSheet" hidden>
     <div class="scrim" data-close></div>
     <section class="sheet post-sheet" role="dialog" aria-modal="true" aria-label="Публикация">
