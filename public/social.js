@@ -202,7 +202,7 @@
   }
   setInterval(() => { if (me && !document.hidden) pullHealth(); }, 10 * 60 * 1000);
   /* «Здоровье»: на iPhone — готовая «Быстрая команда» (2 нажатия), на Android — Health Connect */
-  const SC_NAME = 'Healthy Fit';
+  const SC_NAME = (window.KBJU_CONFIG || {}).healthShortcutName || 'Healthy Fit';
   const scLink = () => (window.KBJU_CONFIG || {}).healthShortcut || '';
   const isAndroid = /Android/i.test(navigator.userAgent);
   const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -214,7 +214,7 @@
   // запустить команду: она прочитает «Здоровье» и отправит шаги и калории на сервер
   function runShortcut() {
     lsSet('hf.hcRun', String(Date.now()));
-    const back = standalone ? '' : `&x-success=${encodeURIComponent(location.origin + '/?health=sync')}&x-cancel=${encodeURIComponent(location.origin + '/?health=cancel')}`;
+    const back = standalone ? '' : `&x-success=${encodeURIComponent(location.origin + '/?health=sync')}&x-cancel=${encodeURIComponent(location.origin + '/?health=cancel')}&x-error=${encodeURIComponent(location.origin + '/?health=error')}`;
     location.href = `shortcuts://x-callback-url/run-shortcut?name=${encodeURIComponent(SC_NAME)}${back}`;
   }
   async function afterSync(silent) {
@@ -742,6 +742,7 @@
     try { history.replaceState(null, '', '/'); } catch {}
     try {
       if (p.get('health') === 'sync') { lsSet('hf.hcRun', '0'); setTimeout(() => afterSync(false), 800); }
+      if (p.get('health') === 'error') { lsSet('hf.hcRun', '0'); HF.toast(`Не удалось запустить команду «${SC_NAME}». Нажмите «Добавить» ещё раз и не меняйте её название.`, 'Открыть', openHealth, 8000); }
       if (p.get('tab')) HF.showTab(p.get('tab'));
       if (p.get('chat')) {
         const id = +p.get('chat'); HF.showTab('chats');
