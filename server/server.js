@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS health (user_id INTEGER NOT NULL, date TEXT NOT NULL,
 `);
 const q = sql => db.prepare(sql);
 // миграции: добавляем колонки, если их ещё нет
-for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER']])
+for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT']])
   if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${def}`);
 db.exec(`CREATE TABLE IF NOT EXISTS comment_likes (comment_id INTEGER NOT NULL, user_id INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (comment_id, user_id));
 CREATE INDEX IF NOT EXISTS posts_vis ON posts (vis, id);`);
@@ -156,7 +156,7 @@ function notify(userId, data, skipIfChat) {
     });
   }
 }
-const msgText = (kind, body, meta) => kind === 'text' ? body.slice(0, 120) : kind === 'meal' ? `🍽 ${meta?.title || 'Блюдо'}${meta?.kcal ? ` · ${Math.round(meta.kcal)} ккал` : ''}`
+const msgText = (kind, body, meta) => kind === 'text' ? body.slice(0, 120) : kind === 'post' ? `📌 Публикация: ${meta?.title || 'блюдо'}${body ? ` — ${body.slice(0, 80)}` : ''}` : kind === 'meal' ? `🍽 ${meta?.title || 'Блюдо'}${meta?.kcal ? ` · ${Math.round(meta.kcal)} ккал` : ''}`
   : kind === 'voice' ? '🎤 Голосовое сообщение' : kind === 'video' ? '📹 Видеосообщение' : '📷 Фото';
 
 /* ---------------- публикации ---------------- */
@@ -340,9 +340,13 @@ async function healthIngest(req, res, url) {
   const u = token && q('SELECT * FROM users WHERE health_token = ?').get(token);
   if (!u) throw fail(401, 'Неверный ключ');
   rate('health:' + u.id, 120, 3_600_000);
-  let body; try { body = JSON.parse((await readBody(req, 2_000_000)).toString('utf8')); } catch { throw fail(400, 'Нужен JSON'); }
+  const raw = (await readBody(req, 2_000_000)).toString('utf8');
+  // последнюю отправку храним для диагностики: пользователь видит в приложении, что именно прислала команда
+  const remember = (ok, parsed) => q('UPDATE users SET health_last = ? WHERE id = ?').run(JSON.stringify({ at: now(), ok, raw: raw.slice(0, 400), parsed, type: String(req.headers['content-type'] || '').slice(0, 60) }), u.id);
+  let body; try { body = JSON.parse(raw); } catch { remember(false, null); throw fail(400, 'Нужен JSON'); }
   const today = String(url.searchParams.get('date') || body.date || dayKey(now())).slice(0, 10);   // «сегодня» по часовому поясу сервиса (APP_TZ), а не по Гринвичу
   const days = harvest(body, today);
+  remember(days.size > 0, Object.fromEntries(days));
   let saved = 0;
   for (const [date, v] of days) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
@@ -480,7 +484,8 @@ async function api(req, res, url) {
   }
   if (p === '/api/health' && M === 'GET') {
     const rows = q('SELECT date, steps, active_kcal, updated FROM health WHERE user_id = ? AND date >= ? ORDER BY date').all(me.id, String(url.searchParams.get('from') || '2000-01-01'));
-    return send(res, 200, { days: rows });
+    const last = q('SELECT health_last FROM users WHERE id = ?').get(me.id)?.health_last;
+    return send(res, 200, { days: rows, last: last ? JSON.parse(last) : null, today: dayKey(now()) });
   }
   if (p === '/api/media' && M === 'POST') return upload(req, res, me);
 
@@ -642,7 +647,7 @@ async function api(req, res, url) {
       if (!areFriends(me.id, other)) throw fail(403, 'Писать можно только друзьям');
       rate('msg:' + me.id, 120, 60_000);
       const b = await json(req, 16_000);
-      const kind = pick(b.kind, ['text', 'meal', 'voice', 'video', 'photo'], 'text');
+      const kind = pick(b.kind, ['text', 'meal', 'voice', 'video', 'photo', 'post'], 'text');
       const body = String(b.body || '').slice(0, 2000);
       let media = null;
       if (['voice', 'video', 'photo', 'meal'].includes(kind) && b.media) {
@@ -651,9 +656,19 @@ async function api(req, res, url) {
         media = m.id;
       }
       if (kind === 'text' && !body.trim()) throw fail(400, 'Пустое сообщение');
+      // пересылка публикации из ленты: другу должна быть видна сама публикация
+      let postRef = null;
+      if (kind === 'post') {
+        postRef = visiblePost(Number(b.post), me.id);
+        if (!canSeePost(other, postRef)) throw fail(403, 'Эту публикацию видят только друзья автора');
+        media = postRef.media;
+      }
       if ((kind === 'voice' || kind === 'video') && !media) throw fail(400, 'Нет записи');
       let meta = null;
-      if (b.meta && typeof b.meta === 'object') {
+      if (postRef) {
+        const pm2 = JSON.parse(postRef.meta || '{}'), au = q('SELECT name, username FROM users WHERE id = ?').get(postRef.user_id);
+        meta = JSON.stringify({ title: pm2.title || '', kcal: num(pm2.kcal), p: num(pm2.p), f: num(pm2.f), c: num(pm2.c), postId: postRef.id, author: au ? { name: au.name, username: au.username } : null });
+      } else if (b.meta && typeof b.meta === 'object') {
         const x = b.meta;
         meta = JSON.stringify({ title: String(x.title || '').slice(0, 80), kcal: num(x.kcal), p: num(x.p), f: num(x.f), c: num(x.c),
           items: (Array.isArray(x.items) ? x.items : []).slice(0, 12).map(i => ({ name: String(i.name || '').slice(0, 40), grams: num(i.grams) })),

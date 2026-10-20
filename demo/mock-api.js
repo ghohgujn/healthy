@@ -47,7 +47,9 @@ window.HFMockApi = (() => {
         const pid = +cm[1];
         if (M === 'GET') { const after = +u.searchParams.get('after') || 0; const ms = st.msgs.filter(m => (m.from === pid || m.to === pid) && m.id > after); ms.forEach(m => { if (m.from === pid) m.read = true; });
           return { messages: ms, peer: users.find(x => x.id === pid), peerRead: 0, friends: st.fr[pid] === 'friends' }; }
-        const m = { id: ++st.id, from: 1, to: pid, kind: body.kind, body: body.body || '', media: body.media ? st.media[body.media] : '', meta: body.meta || null, created: Date.now() };
+        let media = body.media ? st.media[body.media] : '', meta = body.meta || null;
+        if (body.kind === 'post') { const x = st.posts.find(q => q.id === +body.post), au = x.user_id === 1 ? st.me : users.find(y => y.id === x.user_id); media = x.media; meta = { ...x.meta, postId: x.id, author: { name: au.name, username: au.username } }; }
+        const m = { id: ++st.id, from: 1, to: pid, kind: body.kind, body: body.body || '', media, meta, created: Date.now() };
         st.msgs.push(m); return { message: m };
       }
       if (/^\/api\/messages\//.test(p)) { const id = +p.split('/').pop(); st.msgs = st.msgs.filter(m => m.id !== id); return { ok: true }; }

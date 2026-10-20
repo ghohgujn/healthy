@@ -12,14 +12,16 @@
     return new Date(t).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
   };
   const plural = (n, a, b, c) => S().plural(n, a, b, c);
+  // 1250 → «1,3 тыс», чтобы счётчики не наезжали друг на друга в маленькой плитке
+  const compact = n => n < 1000 ? String(n) : n < 1e6 ? `${String(Math.round(n / 100) / 10).replace('.', ',')} тыс` : `${String(Math.round(n / 1e5) / 10).replace('.', ',')} млн`;
   const macros = x => `<span class="pm"><b>${r0(x?.kcal)}</b> ккал</span><span class="pm" style="--c:var(--color-protein)">Б ${r0(x?.p)}</span><span class="pm" style="--c:var(--color-fat)">Ж ${r0(x?.f)}</span><span class="pm" style="--c:var(--color-carb)">У ${r0(x?.c)}</span>`;
 
   /* ---------- сетка публикаций ---------- */
   function grid(posts, empty) {
     if (!posts.length) return `<div class="grid-empty"><svg><use href="#i-grid"/></svg><p>${empty}</p></div>`;
     return `<div class="post-grid">${posts.map(p => `<button class="pg-item" data-post="${p.id}" aria-label="${esc(p.meta?.title || 'Публикация')}, ${r0(p.meta?.kcal)} ккал">
-      <img src="${esc(p.media)}" alt="" loading="lazy"><span class="pg-kcal">${r0(p.meta?.kcal)}</span>
-      ${p.likes ? `<span class="pg-likes"><svg><use href="#i-heart"/></svg>${p.likes}</span>` : ''}</button>`).join('')}</div>`;
+      <img src="${esc(p.media)}" alt="" loading="lazy">
+      ${p.likes ? `<span class="pg-likes"><svg aria-hidden="true"><use href="#i-heart"/></svg>${compact(p.likes)}</span>` : ''}<span class="pg-meta"><span class="pg-kcal">${r0(p.meta?.kcal)}<small>ккал</small></span></span></button>`).join('')}</div>`;
   }
   const bindGrid = root => root.querySelectorAll('[data-post]').forEach(b => b.onclick = () => openPost(+b.dataset.post));
 
@@ -121,11 +123,12 @@
       <div class="fc-photo" data-dbl="${p.id}"><img src="${esc(p.media)}" alt="${esc(p.meta?.title || 'Еда')}" loading="lazy"><i class="fc-burst"><svg><use href="#i-heart"/></svg></i></div>
       <div class="fc-actions">
         <button class="fc-btn like ${p.liked ? 'on' : ''}" data-like="${p.id}" aria-pressed="${p.liked}" aria-label="Нравится"><svg><use href="#${p.liked ? 'i-heart' : 'i-heart-o'}"/></svg><span>${p.likes || ''}</span></button>
-        <button class="fc-btn" data-open="${p.id}" aria-label="Комментарии"><svg><use href="#i-comment"/></svg><span>${p.comments || ''}</span></button>
+        <button class="fc-btn" data-open="${p.id}" aria-label="Комментарии${p.comments ? `: ${p.comments}` : ''}"><svg><use href="#i-comment"/></svg><span>${p.comments || ''}</span></button>
+        <button class="fc-btn" data-send="${p.id}" aria-label="Отправить другу"><svg><use href="#i-send"/></svg></button>
       </div>
       <div class="fc-text"><p class="fc-title">${esc(p.meta?.title || '')}</p><p class="fc-macros">${macros(p.meta)}</p>
         ${p.caption ? `<p class="fc-cap"><b>${esc(p.author.name)}</b> ${esc(p.caption)}</p>` : ''}
-        ${p.comments ? `<button class="link-btn fc-more" data-open="${p.id}">Комментарии: ${p.comments}</button>` : ''}</div>
+</div>
     </article>`;
   }
   function renderFeed() {
@@ -138,6 +141,10 @@
   function bindCards(root, list) {
     root.querySelectorAll('[data-user]').forEach(b => b.onclick = () => openUser(+b.dataset.user));
     root.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openPost(+b.dataset.open, true));
+    root.querySelectorAll('[data-send]').forEach(b => b.onclick = () => {
+      const p = list.find(x => x.id === +b.dataset.send); if (!p) return;
+      S().shareMeal({ post: p.id, name: p.meta?.title || 'Публикация', thumb: p.media, items: [], totals: { kcal: p.meta?.kcal || 0, p: p.meta?.p || 0, f: p.meta?.f || 0, c: p.meta?.c || 0 } });
+    });
     root.querySelectorAll('[data-like]').forEach(b => b.onclick = () => toggleLike(list.find(p => p.id === +b.dataset.like), b));
     root.querySelectorAll('[data-del]').forEach(b => b.onclick = () => deletePost(+b.dataset.del));
     root.querySelectorAll('[data-dbl]').forEach(el => {

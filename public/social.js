@@ -50,7 +50,7 @@
     if (d.toDateString() === n.toDateString()) return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
     return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
   };
-  const preview = m => !m ? '' : m.kind === 'text' ? m.body : m.kind === 'meal' ? `Еда: ${m.meta?.title || 'блюдо'} · ${Math.round(m.meta?.kcal || 0)} ккал`
+  const preview = m => !m ? '' : m.kind === 'text' ? m.body : m.kind === 'post' ? `Публикация: ${m.meta?.title || 'блюдо'}` : m.kind === 'meal' ? `Еда: ${m.meta?.title || 'блюдо'} · ${Math.round(m.meta?.kcal || 0)} ккал`
     : m.kind === 'voice' ? 'Голосовое сообщение' : m.kind === 'video' ? 'Видеосообщение' : 'Фото';
 
   /* ================= account ================= */
@@ -190,11 +190,13 @@
   }
 
   /* ================= «Здоровье» ================= */
+  let healthLast = null;
   async function pullHealth() {
     if (!me) return;
     try {
       const from = HF.keyOf(new Date(Date.now() - 60 * 864e5));
       const r = await api('/api/health?from=' + from);
+      healthLast = r.last || null;
       HF.db.health ||= {};
       for (const d of r.days) HF.db.health[d.date] = { steps: d.steps || 0, active_kcal: d.active_kcal || 0 };
       HF.save(); HF.render();
@@ -217,11 +219,15 @@
     const back = standalone ? '' : `&x-success=${encodeURIComponent(location.origin + '/?health=sync')}&x-cancel=${encodeURIComponent(location.origin + '/?health=cancel')}&x-error=${encodeURIComponent(location.origin + '/?health=error')}`;
     location.href = `shortcuts://x-callback-url/run-shortcut?name=${encodeURIComponent(SC_NAME)}${back}`;
   }
-  async function afterSync(silent) {
+  // Разбираем, что именно случилось, и говорим человеку понятными словами
+  async function afterSync(silent, ranAt = Date.now() - 5 * 60e3) {
     await pullHealth(); renderHealthCard();
-    const h = HF.db.health?.[HF.today()];
-    if (h && (h.steps || h.active_kcal)) { lsSet('hf.hcOk', '1'); if (!silent) HF.toast(`Из «Здоровья»: ${Math.round(h.steps).toLocaleString('ru-RU')} шагов · ${Math.round(h.active_kcal)} ккал`); }
-    else if (!silent) HF.toast('Данных за сегодня пока нет — проверьте доступ команды к «Здоровью»');
+    const h = HF.db.health?.[HF.today()], L = healthLast, fresh = L && L.at > ranAt - 60e3;
+    if (h && (h.steps || h.active_kcal) && (!L || L.ok)) { lsSet('hf.hcOk', '1'); if (!silent) HF.toast(`Из «Здоровья»: ${Math.round(h.steps).toLocaleString('ru-RU')} шагов · ${Math.round(h.active_kcal)} ккал`); return; }
+    if (silent) return;
+    if (!fresh) HF.toast('Команда не достучалась до сервера: в ней не ваш адрес. Нажмите «Добавить» и вставьте адрес, когда «Команды» спросят.', 'Открыть', openHealth, 9000);
+    else if (!L.ok) HF.toast(`Команда прислала данные, но в них нет шагов и калорий: «${(L.raw || 'пусто').slice(0, 80)}». Проверьте поля steps и active_kcal.`, 'Открыть', openHealth, 10000);
+    else HF.toast('Данные пришли, но за другой день — проверьте «Дата начала: Сегодня» в команде', 'Открыть', openHealth, 8000);
   }
   window.HFHealth = { run: runShortcut, afterSync, ready: () => isIOS && lsGet('hf.hcOk') === '1' };
   function renderHealthCard() {
@@ -241,6 +247,7 @@
     if (!me) { g.innerHTML = `<p>Чтобы телефон присылал шаги и калории, нужен аккаунт: так данные попадут именно к вам.</p><button class="btn btn-primary" id="hgAuth">Войти или создать аккаунт</button>`;
       HF.openDialog($('#healthSheet')); $('#hgAuth').onclick = () => { HF.closeDialog($('#healthSheet')); HF.showTab('chats'); }; return; }
     if (!me.healthToken) { try { me.healthToken = (await api('/api/me')).me.healthToken; } catch {} }
+    await pullHealth();
     const url = healthUrl(), link = scLink(), added = lsGet('hf.hcAdded') === '1', ok = lsGet('hf.hcOk') === '1';
     const ios = `
       <ol class="hc-steps">
@@ -250,8 +257,8 @@
         <li class="${ok ? 'done' : added ? 'now' : ''}"><div><b>Запустите один раз</b>
           <p class="sub small">Разрешите доступ к шагам и энергии. Дальше — кнопка «Обновить».</p></div>
           <button class="btn ${added && !ok ? 'btn-primary' : 'btn-ghost'} btn-sm" id="hcRun">Запустить</button></li>
-        <li class="${lsGet('hf.hcAuto') === '1' ? 'done' : ''}"><div><b>Сами каждый день <span class="sub">— по желанию</span></b>
-          <p class="sub small">«Команды» → «Автоматизация» → <b>+</b> → «Время суток» (21:00) → «Запускать сразу» → «${SC_NAME}».</p></div>
+        <li class="${lsGet('hf.hcAuto') === '1' ? 'done' : ''}"><div><b>Чтобы не запускать вручную</b>
+          <p class="sub small">Apple не даёт сайтам читать «Здоровье» в фоне, но «Команды» могут сами: «Автоматизация» → <b>+</b> → «Время суток» → 13:00, «Ежедневно» → <b>«Запускать сразу»</b> → «${SC_NAME}». Повторите для 18:00 и 22:30 — шаги будут обновляться весь день без вас.</p></div>
           <button class="btn btn-ghost btn-sm" id="hcAuto">${lsGet('hf.hcAuto') === '1' ? 'Готово ✓' : 'Сделал'}</button></li>
       </ol>
       ${link ? '' : `<p class="plan-warn">Готовая команда ещё не опубликована — пока соберите её сами по инструкции ниже (2 минуты).</p>`}
@@ -271,6 +278,7 @@
       <p class="field-label">Ваш личный адрес — никому не показывайте</p>
       <div class="copy-row"><code id="hgUrl">${esc(url)}</code><button class="btn btn-ghost btn-sm" id="hgCopy">Копировать</button></div>
       <p class="sub small">За день учитывается большее: активные калории из «Здоровья» или ваши тренировки и шаги — тренировка с часов не посчитается дважды.</p>
+      ${healthLast ? `<p class="sub small hc-last">Последняя отправка: ${new Date(healthLast.at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} — ${healthLast.ok ? 'принята ✓' : `<b>не распознана</b>: <code>${esc((healthLast.raw || 'пусто').slice(0, 120))}</code>`}</p>` : '<p class="sub small hc-last">Команда ещё ни разу не присылала данные.</p>'}
       <div class="row-btns"><button class="btn btn-ghost btn-sm" id="hgPull">Проверить данные</button><button class="btn btn-ghost btn-sm" id="hgRotate">Сменить адрес</button></div>`;
     HF.openDialog($('#healthSheet'));
     const copy = async () => { try { await navigator.clipboard.writeText(url); return true; } catch { getSelection().selectAllChildren($('#hgUrl')); return false; } };
@@ -287,7 +295,7 @@
   // вернулись из «Команд» (вкладка снова видна) — подтягиваем свежие данные
   document.addEventListener('visibilitychange', () => {
     if (document.hidden || !me) return;
-    if (Date.now() - +(lsGet('hf.hcRun') || 0) < 3 * 60 * 1000) { lsSet('hf.hcRun', '0'); setTimeout(() => afterSync(false), 1200); }
+    const ran = +(lsGet('hf.hcRun') || 0); if (Date.now() - ran < 3 * 60 * 1000) { lsSet('hf.hcRun', '0'); setTimeout(() => afterSync(false, ran), 1500); }
   });
 
   /* ================= friends & inbox ================= */
@@ -429,13 +437,15 @@
     li.className = `msg ${mine ? 'mine' : 'theirs'} k-${m.kind}`; li.dataset.id = m.id;
     const t = new Date(m.created).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
     if (m.kind === 'text') li.innerHTML = `<div class="bubble"><p></p><time>${t}</time></div>`, li.querySelector('p').textContent = m.body;
-    else if (m.kind === 'meal') {
+    else if (m.kind === 'meal' || m.kind === 'post') {
       const x = m.meta || {};
-      li.innerHTML = `<div class="bubble meal-msg">${m.media ? `<img src="${esc(m.media)}" alt="" loading="lazy">` : ''}
+      li.innerHTML = `<div class="bubble meal-msg${m.kind === 'post' ? ' post-msg' : ''}">${m.kind === 'post' ? `<p class="pm-from"><svg aria-hidden="true"><use href="#i-share"/></svg>Публикация${x.author ? ' · ' + esc(x.author.name) : ''}</p>` : ''}${m.media ? `<img src="${esc(m.media)}" alt="" loading="lazy">` : ''}
         <div class="mm-body"><b></b><p class="mm-kcal">${Math.round(x.kcal || 0)} ккал</p>
         <p class="mm-mac"><span style="--c:var(--color-protein)">Б ${Math.round(x.p || 0)}</span><span style="--c:var(--color-fat)">Ж ${Math.round(x.f || 0)}</span><span style="--c:var(--color-carb)">У ${Math.round(x.c || 0)}</span></p>
         ${m.body ? '<p class="mm-note"></p>' : ''}<time>${t}</time></div></div>`;
       li.querySelector('b').textContent = x.title || 'Еда'; if (m.body) li.querySelector('.mm-note').textContent = m.body;
+      if (m.kind === 'post' && x.postId) { const bub = li.querySelector('.bubble'); bub.tabIndex = 0; bub.setAttribute('role', 'button'); bub.setAttribute('aria-label', `Открыть публикацию «${x.title || ''}»`);
+        bub.onclick = () => window.HFPosts?.openPost(x.postId); bub.onkeydown = e => { if (e.key === 'Enter') bub.click(); }; }
     } else if (m.kind === 'voice') {
       const dur = Math.round(m.meta?.dur || 0);
       li.innerHTML = `<div class="bubble voice"><button class="vplay" aria-label="Воспроизвести"><svg><use href="#i-play"/></svg></button>
@@ -606,7 +616,7 @@
     shareVis = b.dataset.vis; try { localStorage.setItem('hf.shareVis', shareVis); } catch {} updShare();
   });
   function updShare() {
-    $('#shareVis').hidden = !toProfile;
+    $('#shareVis').hidden = !toProfile || !!shareData?.post;
     $('#shareVis').querySelectorAll('[data-vis]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.vis === shareVis)));
     const n = picked.size + (toProfile ? 1 : 0), btn = $('#shareSend');
     btn.disabled = !n;
@@ -614,7 +624,8 @@
   }
   async function shareMeal(d) {
     if (!me) { HF.toast('Войдите, чтобы делиться с друзьями'); HF.showTab('chats'); return; }
-    shareData = d; picked.clear(); toProfile = !!d.thumb; $('#shareText').value = '';
+    shareData = d; picked.clear(); toProfile = !d.post && !!d.thumb; $('#shareText').value = '';
+    $('#shareTitle').textContent = d.post ? 'Отправить публикацию' : 'Отправить другу';
     $('#sharePreview').innerHTML = `${d.thumb ? `<img src="${esc(d.thumb)}" alt="">` : ''}<span><b></b><small>${Math.round(d.totals.kcal)} ккал · Б ${Math.round(d.totals.p)} · Ж ${Math.round(d.totals.f)} · У ${Math.round(d.totals.c)}</small></span>`;
     $('#sharePreview b').textContent = d.name;
     if (!friends.length) await refreshSocial();
@@ -622,7 +633,7 @@
     const mine = document.createElement('button'); mine.className = 'share-friend share-me'; mine.setAttribute('aria-pressed', String(toProfile));
     mine.innerHTML = `<span class="sf-ava">${avaHTML(me)}<i class="sf-plus"><svg><use href="#i-plus"/></svg></i><i class="sf-check"><svg><use href="#i-check"/></svg></i></span><span>В мой профиль</span>`;
     mine.onclick = () => { if (!d.thumb) { HF.toast('Для публикации нужно фото блюда'); return; } toProfile = !toProfile; mine.setAttribute('aria-pressed', String(toProfile)); updShare(); };
-    row.appendChild(mine);
+    if (!d.post) row.appendChild(mine);
     if (!friends.length) row.insertAdjacentHTML('beforeend', `<p class="sub share-nofr">Друзей пока нет — найдите их во вкладке «Друзья».</p>`);
     for (const u of friends) {
       const b = document.createElement('button'); b.className = 'share-friend'; b.setAttribute('aria-pressed', 'false');
@@ -637,6 +648,11 @@
     const d = shareData; if (!d || (!picked.size && !toProfile)) return;
     const btn = $('#shareSend'); btn.disabled = true; btn.textContent = 'Отправляю…';
     try {
+      if (d.post) {   // пересылка публикации из ленты
+        const body = $('#shareText').value.trim();
+        for (const id of picked) await api(`/api/chats/${id}`, { method: 'POST', body: { kind: 'post', post: d.post, body } });
+        HF.closeDialog($('#shareSheet')); HF.toast(picked.size > 1 ? `Отправлено ${picked.size} друзьям` : 'Отправлено'); refreshSocial(); return;
+      }
       let media;
       if (d.thumb) media = (await uploadImage(d.thumb)).id;
       const meta = { title: d.name, kcal: d.totals.kcal, p: d.totals.p, f: d.totals.f, c: d.totals.c, items: d.items.map(i => ({ name: i.name, grams: i.grams })) };
@@ -741,7 +757,7 @@
     if (![...p.keys()].some(k => ['chat', 'user', 'post', 'tab', 'health'].includes(k))) return;
     try { history.replaceState(null, '', '/'); } catch {}
     try {
-      if (p.get('health') === 'sync') { lsSet('hf.hcRun', '0'); setTimeout(() => afterSync(false), 800); }
+      if (p.get('health') === 'sync') { const ran = +(lsGet('hf.hcRun') || 0) || Date.now() - 120e3; lsSet('hf.hcRun', '0'); setTimeout(() => afterSync(false, ran), 800); }
       if (p.get('health') === 'error') { lsSet('hf.hcRun', '0'); HF.toast(`Не удалось запустить команду «${SC_NAME}». Нажмите «Добавить» ещё раз и не меняйте её название.`, 'Открыть', openHealth, 8000); }
       if (p.get('tab')) HF.showTab(p.get('tab'));
       if (p.get('chat')) {
