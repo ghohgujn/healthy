@@ -80,7 +80,7 @@
       };
     } catch (e) { $('#uvBody').innerHTML = `<p class="sub uv-err">${esc(e.message)}</p>`; }
   }
-  $('#uvBack').onclick = () => HF.closeDialog(uv);
+  $('#uvBack').onclick = () => HF.closeDialog(uv); uv._back = () => HF.closeDialog(uv);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !uv.hidden && $('#postSheet').hidden) { e.stopPropagation(); HF.closeDialog(uv); } }, true);
 
   /* ---------- лента: «Для вас» (все открытые посты по свежести) и «Друзья» ---------- */

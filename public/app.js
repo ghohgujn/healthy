@@ -403,7 +403,7 @@
     $('#mealName').textContent = draft.editing && draft.name ? draft.name : titleOf(draft.items);
     const conf = { low: 'низкая', medium: 'средняя', high: 'высокая' }[draft.confidence] || '';
     $('#mealMeta').textContent = [draft.model, conf && `уверенность ${conf}`].filter(Boolean).join(' · ');
-    $('#reportMeal').classList.toggle('attn', draft.confidence === 'low' && !draft.editing);
+    $('#confNote').hidden = !(draft.confidence === 'low' && !draft.editing);
     renderTotals();
 
     const q = $('#question');
@@ -547,7 +547,9 @@
 
   /* ================= v3: tabs ================= */
   let tab = 'today';
-  function showTab(name) {
+  const tabTrail = [];   // история вкладок для «назад»
+  function showTab(name, fromBack) {
+    if (!fromBack && name !== tab) { tabTrail.push(tab); if (tabTrail.length > 20) tabTrail.shift(); }
     tab = name;
     for (const t of ['today', 'activity', 'feed', 'chats', 'profile']) $('#tab-' + t).hidden = t !== name;
     // «Активность» живёт внутри «Сегодня»: подсвечиваем ту же кнопку внизу
@@ -865,7 +867,69 @@
     window.HFSocial?.shareMeal({ name: $('#mealName').textContent, thumb: d.thumb, items: d.items.map(i => ({ ...i })), totals: mealTotals(d.items),
       onSent: () => draft === d && !sheet.hidden ? commitDraft(true) : null });
   };
-  window.HF = { get draft() { return draft; }, mealTitle: () => $('#mealName').textContent, setInert, get db() { return db; }, set db(v) { db = v; }, validDb, mergeDb, save, day, mealTotals, openDialog, closeDialog, toast, render, streakInfo, keyOf, today, showTab, loadImage, paintAvatar, actKcal };
+  /* ---------- «Назад»: закрыть верхнее окно или вернуться на прошлую вкладку ---------- */
+  // У окна может быть свой обработчик (чат останавливает опрос, камера — поток): el._back()
+  function goBack() {
+    const top = stack[stack.length - 1];
+    if (top) { const el = top.el; el === camEl ? closeCamera() : el._back ? el._back() : closeDialog(el); return true; }
+    while (tabTrail.length) { const prev = tabTrail.pop(); if (prev !== tab) { showTab(prev, true); return true; } }
+    return false;
+  }
+  // Safari: системный свайп «назад» ловим через одну «пустую» запись истории и возвращаем её на место
+  // запись добавляем после первого касания: браузеры пропускают «назад» по записям, созданным без действия человека
+  addEventListener('pointerdown', () => { try { history.pushState({ hf: 1 }, ''); } catch {} }, { once: true, capture: true });
+  window.addEventListener('popstate', () => {
+    if (goBack()) { try { history.pushState({ hf: 1 }, ''); } catch {} }
+    else history.back();   // уже на главном экране — даём уйти со страницы как обычно
+  });
+  // Приложение с экрана «Домой» системного жеста не имеет — свой свайп от левого края
+  const standaloneApp = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  if (standaloneApp) {
+    let ex = null, ey = 0, edx = 0;
+    const hint = document.createElement('div'); hint.className = 'edge-back'; hint.innerHTML = '<svg><use href="#i-back"/></svg>'; document.body.appendChild(hint);
+    addEventListener('touchstart', e => { const t = e.touches[0]; ex = t.clientX <= 22 ? t.clientX : null; ey = t.clientY; edx = 0; }, { passive: true });
+    addEventListener('touchmove', e => {
+      if (ex == null) return; const t = e.touches[0]; edx = t.clientX - ex;
+      if (Math.abs(t.clientY - ey) > Math.max(30, edx)) { ex = null; hint.style.cssText = ''; return; }
+      const k = Math.min(1, edx / 90); hint.style.cssText = `opacity:${k};transform:translate(${Math.min(edx, 90) * 0.5}px,-50%) scale(${0.6 + 0.4 * k})`; hint.classList.toggle('on', edx > 80);
+    }, { passive: true });
+    addEventListener('touchend', () => { if (ex != null && edx > 80) goBack(); ex = null; hint.style.cssText = ''; hint.classList.remove('on'); });
+  }
+
+  /* ---------- шторки: «ручка» сверху и закрытие взмахом вниз ---------- */
+  document.querySelectorAll('.sheet-wrap > .sheet').forEach(sh => {
+    if (!sh.querySelector('.grabber')) sh.insertAdjacentHTML('afterbegin', '<span class="grabber" aria-hidden="true"></span>');
+    const wrap = sh.parentElement;
+    let y0 = null, x0 = 0, t0 = 0, dy = 0, scroller = null, drag = false;
+    sh.addEventListener('touchstart', e => {
+      if (e.target.closest('input, textarea, .stepper, .share-row, .chips')) { y0 = null; return; }
+      const t = e.touches[0]; y0 = t.clientY; x0 = t.clientX; t0 = performance.now(); dy = 0; drag = false;
+      scroller = e.target.closest('.sheet-body, .post-body, .uv-scroll');
+    }, { passive: true });
+    sh.addEventListener('touchmove', e => {
+      if (y0 == null) return; const t = e.touches[0]; const d = t.clientY - y0;
+      if (!drag) {
+        if (Math.abs(t.clientX - x0) > Math.abs(d)) { y0 = null; return; }        // горизонтальный жест (свайп комментария) — не наш
+        if (d <= 6 || (scroller && scroller.scrollTop > 0)) { if (d < -6) y0 = null; return; }
+        drag = true; sh.style.transition = 'none';
+      }
+      dy = Math.max(0, d); sh.style.transform = `translateY(${dy}px)`;
+      const sc = wrap.querySelector('.scrim'); if (sc) sc.style.opacity = String(1 - Math.min(0.7, dy / 400));
+      if (e.cancelable) e.preventDefault();
+    }, { passive: false });
+    sh.addEventListener('touchend', () => {
+      if (y0 == null || !drag) { y0 = null; return; }
+      const v = dy / Math.max(1, performance.now() - t0), sc = wrap.querySelector('.scrim');
+      sh.style.transition = 'transform 220ms cubic-bezier(.2,.8,.2,1)';
+      if (dy > 140 || v > 0.7) {
+        sh.style.transform = 'translateY(100%)';
+        setTimeout(() => { closeDialog(wrap); sh.style.transform = ''; sh.style.transition = ''; if (sc) sc.style.opacity = ''; }, 200);
+      } else { sh.style.transform = ''; if (sc) sc.style.opacity = ''; setTimeout(() => { sh.style.transition = ''; }, 230); }
+      y0 = null; drag = false;
+    });
+  });
+
+  window.HF = { goBack, get draft() { return draft; }, mealTitle: () => $('#mealName').textContent, setInert, get db() { return db; }, set db(v) { db = v; }, validDb, mergeDb, save, day, mealTotals, openDialog, closeDialog, toast, render, streakInfo, keyOf, today, showTab, loadImage, paintAvatar, actKcal };
 
   /* ---------- day rollover ---------- */
   function rollDay() {

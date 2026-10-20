@@ -55,8 +55,10 @@
 
   /* ================= account ================= */
   async function boot() {
-    if (DEMO) { try { me = (await api('/api/me')).me; } catch { me = null; } renderAuth(); renderAccountCard(); renderHealthCard(); if (me) refreshSocial(); return; }
+    if (DEMO) { try { me = (await api('/api/me')).me; } catch { me = null; } if (me && !HF.db.profile.name && me.name) { HF.db.profile.name = me.name; HF.save(); HF.render(); } renderAuth(); renderAccountCard(); renderHealthCard(); if (me) refreshSocial(); return; }
     try { me = (await api('/api/me')).me; } catch { me = null; }
+    // имя из аккаунта, если в профиле на телефоне его ещё нет
+    if (me && !HF.db.profile.name && me.name) { HF.db.profile.name = me.name; HF.save(); HF.render(); }
     renderAuth(); renderAccountCard(); renderHealthCard();
     if (me) { await refreshSocial(); pullHealth(); restoreIfEmpty(); syncPush(); route(); }
     renderPushUI();
@@ -387,15 +389,15 @@
   const chatEl = $('#chat');
   let peer = null, lastId = 0, chatPoll = null, peerRead = 0;
   async function openChat(u) {
-    peer = u; lastId = 0; peerRead = 0;
+    peer = u; lastId = 0; peerRead = 0; setReplyMsg(null);
     ava($('#chatAva'), u); $('#chatName').textContent = u.name; $('#chatSub').textContent = '@' + u.username; $('#flameBanner').hidden = true;
     $('#msgs').innerHTML = ''; $('#msgInput').value = ''; updateSendBtn();
     HF.openDialog(chatEl, '#msgInput');
     await loadMsgs();
     clearInterval(chatPoll); chatPoll = setInterval(() => { if (!document.hidden) loadMsgs(); }, 3000);
   }
-  function closeChat() { clearInterval(chatPoll); if (R) recFinish(false); HF.closeDialog(chatEl); peer = null; refreshSocial(); }
-  $('#chatBack').onclick = closeChat;
+  function closeChat() { setReplyMsg(null); clearInterval(chatPoll); if (R) recFinish(false); HF.closeDialog(chatEl); peer = null; refreshSocial(); }
+  $('#chatBack').onclick = closeChat; chatEl._back = closeChat;
   async function loadMsgs() {
     if (!peer) return;
     try {
@@ -438,14 +440,19 @@
     const t = new Date(m.created).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
     if (m.kind === 'text') li.innerHTML = `<div class="bubble"><p></p><time>${t}</time></div>`, li.querySelector('p').textContent = m.body;
     else if (m.kind === 'meal' || m.kind === 'post') {
-      const x = m.meta || {};
-      li.innerHTML = `<div class="bubble meal-msg${m.kind === 'post' ? ' post-msg' : ''}">${m.kind === 'post' ? `<p class="pm-from"><svg aria-hidden="true"><use href="#i-share"/></svg>Публикация${x.author ? ' · ' + esc(x.author.name) : ''}</p>` : ''}${m.media ? `<img src="${esc(m.media)}" alt="" loading="lazy">` : ''}
-        <div class="mm-body"><b></b><p class="mm-kcal">${Math.round(x.kcal || 0)} ккал</p>
-        <p class="mm-mac"><span style="--c:var(--color-protein)">Б ${Math.round(x.p || 0)}</span><span style="--c:var(--color-fat)">Ж ${Math.round(x.f || 0)}</span><span style="--c:var(--color-carb)">У ${Math.round(x.c || 0)}</span></p>
-        ${m.body ? '<p class="mm-note"></p>' : ''}<time>${t}</time></div></div>`;
-      li.querySelector('b').textContent = x.title || 'Еда'; if (m.body) li.querySelector('.mm-note').textContent = m.body;
-      if (m.kind === 'post' && x.postId) { const bub = li.querySelector('.bubble'); bub.tabIndex = 0; bub.setAttribute('role', 'button'); bub.setAttribute('aria-label', `Открыть публикацию «${x.title || ''}»`);
-        bub.onclick = () => window.HFPosts?.openPost(x.postId); bub.onkeydown = e => { if (e.key === 'Enter') bub.click(); }; }
+      // карточка вложения на своей «бумаге», подпись — отдельной строкой в цвете пузыря, как в Telegram
+      const x = m.meta || {}, isPost = m.kind === 'post';
+      li.innerHTML = `<div class="bubble media-bubble">
+        <div class="att"${isPost && x.postId ? ' role="button" tabindex="0"' : ''}>
+          ${isPost && x.author ? `<div class="att-from"><span class="avatar">${esc((x.author.name || '?').charAt(0).toUpperCase())}</span><b>${esc(x.author.name)}</b><span>публикация</span></div>` : ''}
+          ${m.media ? `<img class="att-img" src="${esc(m.media)}" alt="" loading="lazy">` : ''}
+          <div class="att-info"><b class="att-title"></b>
+            <p class="att-kcal"><b>${Math.round(x.kcal || 0)}</b> ккал<span style="--c:var(--color-protein)">Б ${Math.round(x.p || 0)}</span><span style="--c:var(--color-fat)">Ж ${Math.round(x.f || 0)}</span><span style="--c:var(--color-carb)">У ${Math.round(x.c || 0)}</span></p></div>
+        </div>
+        ${m.body ? '<p class="cap"></p>' : ''}<time>${t}</time></div>`;
+      li.querySelector('.att-title').textContent = x.title || 'Еда'; if (m.body) li.querySelector('.cap').textContent = m.body;
+      if (isPost && x.postId) { const att = li.querySelector('.att'); att.setAttribute('aria-label', `Открыть публикацию «${x.title || ''}»`);
+        att.onclick = () => window.HFPosts?.openPost(x.postId); att.onkeydown = e => { if (e.key === 'Enter') att.click(); }; }
     } else if (m.kind === 'voice') {
       const dur = Math.round(m.meta?.dur || 0);
       li.innerHTML = `<div class="bubble voice"><button class="vplay" aria-label="Воспроизвести"><svg><use href="#i-play"/></svg></button>
@@ -462,12 +469,56 @@
       wrap.onclick = () => { document.querySelectorAll('audio, video').forEach(a => a !== v && a.pause()); v.paused ? (v.muted = false, v.play()) : v.pause(); };
       v.onplay = () => wrap.classList.add('playing'); v.onpause = v.onended = () => wrap.classList.remove('playing');
     }
+    if (m.reply) {
+      const q = document.createElement('button'); q.className = 'quote'; q.type = 'button';
+      q.innerHTML = `<b></b><span></span>`;
+      q.querySelector('b').textContent = m.reply.deleted ? 'Сообщение удалено' : m.reply.from === me.id ? 'Вы' : peer?.name || '';
+      q.querySelector('span').textContent = m.reply.deleted ? '' : m.reply.text;
+      q.onclick = e => { e.stopPropagation(); const o = document.querySelector(`.msg[data-id="${m.reply.id}"]`); if (o) { o.scrollIntoView({ block: 'center', behavior: 'smooth' }); o.classList.remove('flash'); void o.offsetWidth; o.classList.add('flash'); } };
+      const host = li.querySelector('.bubble, .circle-msg'); host?.prepend(q);
+    }
+    li.insertAdjacentHTML('beforeend', '<span class="msg-swipe" aria-hidden="true"><svg><use href="#i-reply"/></svg></span>');
+    bindSwipeReply(li, m);
     if (mine) {
       li.addEventListener('contextmenu', e => { e.preventDefault(); delMsg(m.id, li); });
       let lp; li.addEventListener('touchstart', () => { lp = setTimeout(() => delMsg(m.id, li), 650); }, { passive: true });
       li.addEventListener('touchend', () => clearTimeout(lp)); li.addEventListener('touchmove', () => clearTimeout(lp), { passive: true });
     }
     $('#msgs').appendChild(li); markRead();
+  }
+  /* ответ на сообщение: свайп влево (как в Telegram) или двойной тап */
+  let replyMsg = null;
+  const msgSnippet = m => m.kind === 'text' ? m.body : preview(m);
+  function setReplyMsg(m) {
+    replyMsg = m; $('#msgReply').hidden = !m;
+    if (!m) return;
+    $('#msgReplyName').textContent = m.from === me.id ? 'Ответ себе' : `Ответ ${peer?.name || ''}`;
+    $('#msgReplyText').textContent = msgSnippet(m).slice(0, 90);
+    $('#msgInput').focus();
+  }
+  $('#msgReplyX').onclick = () => setReplyMsg(null);
+  function bindSwipeReply(li, m) {
+    let x0 = 0, y0 = 0, dx = 0, on = false, moved = false;
+    const move = el => el && (el.style.transform = dx ? `translateX(${dx}px)` : '');
+    const target = () => li.querySelector('.bubble, .circle-msg');
+    li.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse' && e.button) return; if (e.target.closest('button, video, audio, .vplay')) return; x0 = e.clientX; y0 = e.clientY; dx = 0; on = true; moved = false; });
+    li.addEventListener('pointermove', e => {
+      if (!on) return;
+      const ddx = e.clientX - x0, ddy = e.clientY - y0;
+      if (!moved && Math.abs(ddy) > 10 && Math.abs(ddy) > Math.abs(ddx)) { on = false; return; }
+      if (ddx < -6) {
+        moved = true; dx = Math.max(-92, ddx > -64 ? ddx : -64 + (ddx + 64) * 0.4);   // после 64 px — «резинка»
+        target().style.transition = 'none'; move(target());
+        li.style.setProperty('--sw', Math.min(1, -dx / 60)); li.classList.toggle('armed', dx < -56);
+      }
+    });
+    const end = () => {
+      if (!on) return; on = false;
+      const t = target(); t.style.transition = ''; dx = 0; move(t); li.style.removeProperty('--sw');
+      if (li.classList.contains('armed')) { li.classList.remove('armed'); try { navigator.vibrate?.(12); } catch {} setReplyMsg(m); }
+    };
+    li.addEventListener('pointerup', end); li.addEventListener('pointercancel', end); li.addEventListener('pointerleave', end);
+    li.addEventListener('dblclick', e => { if (!e.target.closest('button, video')) setReplyMsg(m); });
   }
   async function delMsg(id, li) {
     li.classList.add('del-ask');
@@ -476,7 +527,8 @@
   }
   async function sendMsg(payload) {
     if (!peer) return;
-    try { const r = await api(`/api/chats/${peer.id}`, { method: 'POST', body: payload }); appendMsg(r.message); lastId = Math.max(lastId, r.message.id);
+    if (replyMsg) payload = { ...payload, reply: replyMsg.id };
+    try { const r = await api(`/api/chats/${peer.id}`, { method: 'POST', body: payload }); setReplyMsg(null); appendMsg(r.message); lastId = Math.max(lastId, r.message.id);
       $('#chatScroll').scrollTop = $('#chatScroll').scrollHeight; return true; }
     catch (e) { HF.toast(e.message); return false; }
   }
@@ -631,7 +683,7 @@
     if (!friends.length) await refreshSocial();
     const row = $('#shareFriends'); row.innerHTML = '';
     const mine = document.createElement('button'); mine.className = 'share-friend share-me'; mine.setAttribute('aria-pressed', String(toProfile));
-    mine.innerHTML = `<span class="sf-ava">${avaHTML(me)}<i class="sf-plus"><svg><use href="#i-plus"/></svg></i><i class="sf-check"><svg><use href="#i-check"/></svg></i></span><span>В мой профиль</span>`;
+    mine.innerHTML = `<span class="sf-ava">${avaHTML(me)}<i class="sf-plus"><svg><use href="#i-plus"/></svg></i><i class="sf-check"><svg><use href="#i-check"/></svg></i></span><span>В профиль</span>`;
     mine.onclick = () => { if (!d.thumb) { HF.toast('Для публикации нужно фото блюда'); return; } toProfile = !toProfile; mine.setAttribute('aria-pressed', String(toProfile)); updShare(); };
     if (!d.post) row.appendChild(mine);
     if (!friends.length) row.insertAdjacentHTML('beforeend', `<p class="sub share-nofr">Друзей пока нет — найдите их во вкладке «Друзья».</p>`);

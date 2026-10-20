@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS health (user_id INTEGER NOT NULL, date TEXT NOT NULL,
 `);
 const q = sql => db.prepare(sql);
 // миграции: добавляем колонки, если их ещё нет
-for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT']])
+for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER']])
   if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${def}`);
 db.exec(`CREATE TABLE IF NOT EXISTS comment_likes (comment_id INTEGER NOT NULL, user_id INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (comment_id, user_id));
 CREATE INDEX IF NOT EXISTS posts_vis ON posts (vis, id);`);
@@ -674,8 +674,11 @@ async function api(req, res, url) {
           items: (Array.isArray(x.items) ? x.items : []).slice(0, 12).map(i => ({ name: String(i.name || '').slice(0, 40), grams: num(i.grams) })),
           dur: Math.min(600, num(x.dur)) });
       }
-      const r = q('INSERT INTO messages (sender, recipient, kind, body, media, meta, created) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .run(me.id, other, kind, body, media, meta, now());
+      // ответ на сообщение — только из этой же переписки
+      let replyTo = null;
+      if (b.reply) { const rm = q('SELECT id FROM messages WHERE id = ? AND ((sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?))').get(Number(b.reply), me.id, other, other, me.id); replyTo = rm ? rm.id : null; }
+      const r = q('INSERT INTO messages (sender, recipient, kind, body, media, meta, created, reply_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(me.id, other, kind, body, media, meta, now(), replyTo);
       notify(other, { title: me.name, body: msgText(kind, body, meta && JSON.parse(meta)), url: `/?chat=${me.id}`, tag: `chat-${me.id}` }, me.id);
       return send(res, 200, { message: shapeMsg(q('SELECT * FROM messages WHERE id = ?').get(r.lastInsertRowid)) });
     }
@@ -693,8 +696,13 @@ async function api(req, res, url) {
   throw fail(404, 'Не найдено');
 }
 function shapeMsg(m) {
+  let reply = null;
+  if (m.reply_to) {
+    const o = q('SELECT id, sender, kind, body, meta FROM messages WHERE id = ?').get(m.reply_to);
+    reply = o ? { id: o.id, from: o.sender, kind: o.kind, text: msgText(o.kind, o.body || '', o.meta ? JSON.parse(o.meta) : null).slice(0, 90) } : { id: m.reply_to, deleted: true };
+  }
   return { id: m.id, from: m.sender, to: m.recipient, kind: m.kind, body: m.body || '', media: m.media ? `/media/${m.media}` : '',
-    meta: m.meta ? JSON.parse(m.meta) : null, created: m.created, read: Boolean(m.read_at) };
+    meta: m.meta ? JSON.parse(m.meta) : null, created: m.created, read: Boolean(m.read_at), reply };
 }
 
 /* ---------------- static ---------------- */

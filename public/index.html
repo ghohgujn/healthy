@@ -269,8 +269,7 @@
         <img id="mealPhoto" alt="">
         <button class="icon-btn icon-btn-float" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button>
         <div class="photo-rail" id="mealRail" hidden>
-          <button class="rail-btn" id="shareMeal" aria-label="Поделиться с друзьями или в профиле"><span class="rail-ico"><svg><use href="#i-share"/></svg></span><span class="rail-lbl">Поделиться</span></button>
-          <button class="rail-btn rail-warn" id="reportMeal" aria-label="Сообщить, что посчитано неточно"><span class="rail-ico"><svg><use href="#i-alert"/></svg></span><span class="rail-lbl">Неточно?</span></button>
+          <button class="rail-btn" id="shareMeal" aria-label="Поделиться: другу или в профиль"><span class="rail-ico"><svg><use href="#i-send"/></svg></span></button>
         </div>
       </div>
       <div class="sheet-body">
@@ -307,6 +306,7 @@
 
           <ul class="items" id="items"></ul>
 
+          <p class="conf-note" id="confNote" hidden><svg aria-hidden="true"><use href="#i-alert"/></svg>Нейросеть не уверена в составе — проверьте граммы</p>
           <details class="refine" id="refine">
             <summary>Уточнить состав или вес</summary>
             <label class="field-label" for="caption">Например: «2 котлеты и гречка 200 г, без масла»</label>
@@ -315,6 +315,7 @@
               <button class="btn btn-ghost btn-sm" id="reanalyze">Пересчитать</button>
             </div>
           </details>
+          <button class="report-link" id="reportMeal" type="button"><svg aria-hidden="true"><use href="#i-alert"/></svg>Посчитано неточно? Сообщить</button>
         </div>
       </div>
       <footer class="sheet-foot" id="mealFoot" hidden>
@@ -369,6 +370,11 @@
     </div>
     <div class="circle-rec" id="circleRec" hidden aria-hidden="true">
       <div class="circle-view"><video id="circleVideo" playsinline muted autoplay></video><svg class="circle-prog" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" id="circleProg"/></svg></div>
+    </div>
+    <div class="msg-reply" id="msgReply" hidden>
+      <svg aria-hidden="true"><use href="#i-reply"/></svg>
+      <div class="mr-body"><b id="msgReplyName"></b><span id="msgReplyText"></span></div>
+      <button class="icon-btn" id="msgReplyX" aria-label="Отменить ответ"><svg><use href="#i-x"/></svg></button>
     </div>
     <div class="composer" id="composer">
       <button class="cmp-btn" id="recTrash" aria-label="Отменить запись" hidden><svg><use href="#i-trash"/></svg></button>
