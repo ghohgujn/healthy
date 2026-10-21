@@ -31,7 +31,9 @@ window.HFMockApi = (() => {
       const arm = /^\/api\/admin\/reports\/(\d+)$/.exec(p); if (arm) { const r = (st.reports || []).find(x => x.id === +arm[1]); if (r) r.status = body.status; return { ok: true }; }
       if (p === '/api/me') { if (M === 'PATCH') Object.assign(st.me, { name: body.name || st.me.name, username: body.username || st.me.username }); return { me: st.me }; }
       if (p === '/api/users') { const q = (u.searchParams.get('q') || '').toLowerCase(); return { users: users.filter(x => (x.username + x.name).toLowerCase().includes(q)).map(pubU) }; }
-      if (p === '/api/friends') return { friends: users.filter(x => st.fr[x.id] === 'friends'), incoming: users.filter(x => st.fr[x.id] === 'incoming'), sent: users.filter(x => st.fr[x.id] === 'sent') };
+      const SUM = { 2: { kcal: 1480, goal: 2100, p: 92, f: 51, c: 160, pGoal: 130, fGoal: 70, cGoal: 240, water: 1500, waterGoal: 2250, meals: 3, workouts: 1, updated: Date.now() - 12 * 60000 },
+        3: { kcal: 2460, goal: 2300, p: 140, f: 88, c: 260, pGoal: 150, fGoal: 75, cGoal: 250, water: 2750, waterGoal: 2500, meals: 4, workouts: 0, updated: Date.now() - 95 * 60000 } };
+      if (p === '/api/friends') return { friends: users.filter(x => st.fr[x.id] === 'friends').map(x => ({ ...x, today: SUM[x.id] ? { kcal: SUM[x.id].kcal, goal: SUM[x.id].goal, meals: SUM[x.id].meals } : null })), incoming: users.filter(x => st.fr[x.id] === 'incoming'), sent: users.filter(x => st.fr[x.id] === 'sent') };
       const rs = /^\/api\/friends\/(\d+)\/restore$/.exec(p);
       if (rs) { const f = users.find(x => x.id === +rs[1]); if (!f.flame.canRestore) throw new Error('Огонёк уже восстанавливали — второй раз нельзя'); f.flame = { count: f.flame.count + 1, state: 'risk', canRestore: false }; return { flame: f.flame }; }
       const fm = /^\/api\/friends\/(\d+)$/.exec(p);
@@ -84,7 +86,7 @@ window.HFMockApi = (() => {
       const um = /^\/api\/users\/(\d+)$/.exec(p);
       if (um) { const id = +um[1], x = who(id), visible = friendOk(id);
         const posts = st.posts.filter(q => q.user_id === id && (visible || q.vis === 'public')).sort((a, b) => b.created - a.created).map(shapeP);
-        return { user: { ...x, state: id === 1 ? 'self' : st.fr[id] || 'none', postsCount: st.posts.filter(q => q.user_id === id).length, friendsCount: id === 1 ? users.filter(y => st.fr[y.id] === 'friends').length : 3 + id }, posts, visible }; }
+        return { user: { ...x, summary: st.fr[id] === 'friends' ? (SUM[id] || null) : null, state: id === 1 ? 'self' : st.fr[id] || 'none', postsCount: st.posts.filter(q => q.user_id === id).length, friendsCount: id === 1 ? users.filter(y => st.fr[y.id] === 'friends').length : 3 + id }, posts, visible }; }
       if (p === '/api/feed') { const all = u.searchParams.get('scope') === 'all';
         return { posts: st.posts.filter(x => all ? vis(x) : friendOk(x.user_id)).sort((a, b) => b.created - a.created).map(shapeP) }; }
       if (p === '/api/posts' && M === 'POST') { const x = { id: ++st.id, user_id: 1, media: st.media[body.media], caption: body.caption || '', meta: body.meta || {}, created: Date.now(), likers: new Set(), likesBase: 0, vis: body.vis === 'friends' ? 'friends' : 'public' }; st.posts.push(x); return { post: shapeP(x) }; }

@@ -124,9 +124,15 @@
       <label class="field"><span class="field-label">Короткое имя — по нему вас находят друзья</span>
         <span class="uname"><span>@</span><input class="input" id="unameInput" maxlength="20" autocapitalize="none" spellcheck="false" autocomplete="username" value="${esc(me.username)}"></span></label>
       <p class="sub small" id="unameHint"></p>
-      <div class="push-row" id="pushRow"></div>
+      <label class="push-row share-sum"><div><b>Друзья видят мою сводку</b><p class="sub small">Калории и БЖУ за сегодня — только друзьям</p></div>
+        <input type="checkbox" class="switch" id="shareSummary" ${me.shareSummary === false ? '' : 'checked'}></label>
       ${canOfferInstall() ? '<div class="push-row"><div><b>Приложение на экране «Домой»</b><p class="sub small">Быстрый запуск и уведомления</p></div><button class="btn btn-ghost btn-sm" id="installOpen">Установить</button></div>' : ''}`;
     $('#installOpen')?.addEventListener('click', openInstall);
+    $('#shareSummary')?.addEventListener('change', async e => {
+      const on = e.target.checked;
+      try { await api('/api/me', { method: 'PATCH', body: { shareSummary: on } }); me.shareSummary = on; HF.toast(on ? 'Друзья видят вашу сводку за день' : 'Сводка скрыта от друзей'); }
+      catch (err) { e.target.checked = !on; HF.toast(err.message); }
+    });
     renderPushUI();
     const ui = $('#unameInput');
     ui.addEventListener('input', () => checkName(ui.value, $('#unameHint'), me.username));
@@ -334,6 +340,10 @@
     row.innerHTML = friends.length ? '' : `<p class="sub friend-empty">Найдите друзей по логину через поиск выше.</p>`;
     for (const u of friends) {
       const b = document.createElement('button'); b.className = 'friend';
+      // тонкое кольцо вокруг аватарки — насколько друг заполнил дневную норму
+      const pr = u.today && u.today.goal ? Math.min(1, u.today.kcal / u.today.goal) : 0;
+      if (u.today) b.style.setProperty('--prog', pr.toFixed(3));
+      if (u.today) b.classList.add('has-prog'), b.title = `${u.name}: ${u.today.kcal} из ${u.today.goal} ккал сегодня`;
       b.innerHTML = `${avaHTML(u, 'friend-ava')}<span>${esc(u.name)}</span>${u.flame && u.flame.state !== 'none' ? `<span class="mini-flame">${flameBadge(u.flame)}</span>` : ''}`;
       b.onclick = () => openChat(u);   // сразу в переписку; профиль — по тапу на имя в шапке чата
       row.appendChild(b);
@@ -394,7 +404,7 @@
     peer = u; lastId = 0; peerRead = 0; setReplyMsg(null);
     ava($('#chatAva'), u); $('#chatName').textContent = u.name; $('#chatSub').textContent = '@' + u.username; $('#flameBanner').hidden = true;
     $('#msgs').innerHTML = ''; $('#msgInput').value = ''; updateSendBtn();
-    HF.openDialog(chatEl, '#msgInput');
+    HF.openDialog(chatEl, '#chatBack');   // без автофокуса: сначала читаем переписку, клавиатура — по нажатию на поле
     await loadMsgs();
     clearInterval(chatPoll); chatPoll = setInterval(() => { if (!document.hidden) loadMsgs(); }, 3000);
   }
@@ -708,7 +718,7 @@
         HF.closeDialog($('#shareSheet')); HF.toast(picked.size > 1 ? `Отправлено ${picked.size} друзьям` : 'Отправлено'); refreshSocial(); return;
       }
       let media;
-      if (d.thumb) media = (await uploadImage(d.thumb)).id;
+      if (d.image || d.thumb) media = (await uploadImage(d.image || d.thumb)).id;   // полное фото — для эстетики ленты
       const meta = { title: d.name, kcal: d.totals.kcal, p: d.totals.p, f: d.totals.f, c: d.totals.c, items: d.items.map(i => ({ name: i.name, grams: i.grams })) };
       const body = $('#shareText').value.trim();
       if (toProfile && media) await api('/api/posts', { method: 'POST', body: { media, caption: body, meta, vis: shareVis } });
@@ -783,13 +793,18 @@
   async function renderPushUI() {
     const st = await pushStatus();
     const label = { on: 'Включены на этом устройстве', off: 'Выключены', denied: 'Запрещены в настройках', 'ios-install': 'Нужно добавить на экран «Домой»', unsupported: 'Браузер не поддерживает' }[st];
-    const row = $('#pushRow');
+    const row = $('#pushRow'), card = $('#pushCard');
+    if (card) card.hidden = !me;
     if (row) {
-      row.innerHTML = `<div><b>Уведомления</b><p class="sub small">${label}</p></div>` + (st === 'on'
-        ? '<button class="btn btn-ghost btn-sm" id="pushTest">Проверить</button>'
-        : `<button class="btn btn-primary btn-sm" id="pushOn">${st === 'off' ? 'Включить' : 'Как включить'}</button>`);
+      // статус + обе кнопки: «Подключить» (или «Как включить») и «Проверить» — тестовое уведомление на это устройство
+      row.innerHTML = `<div><span class="push-dot ${st === 'on' ? 'on' : st === 'denied' ? 'bad' : ''}" aria-hidden="true"></span><b>${label}</b></div>
+        <div class="push-btns">${st === 'on' ? '' : `<button class="btn btn-primary btn-sm" id="pushOn">${st === 'off' ? 'Подключить' : 'Как включить'}</button>`}
+        <button class="btn btn-ghost btn-sm" id="pushTest"${st === 'on' ? '' : ' hidden'}>Проверить</button></div>`;
       $('#pushOn')?.addEventListener('click', enablePush);
-      $('#pushTest')?.addEventListener('click', async () => { try { const r = await api('/api/push/test', { method: 'POST' }); HF.toast(r.devices ? 'Отправили тестовое уведомление' : 'Устройство не подписано — нажмите «Включить»'); } catch (e) { HF.toast(e.message); } });
+      $('#pushTest')?.addEventListener('click', async () => {
+        try { await syncPush(); const r = await api('/api/push/test', { method: 'POST' });
+          HF.toast(r.devices ? `Отправили тестовое уведомление на ${r.devices} ${plural(r.devices, 'устройство', 'устройства', 'устройств')} — придёт через пару секунд` : 'Это устройство не подписано — нажмите «Подключить»'); }
+        catch (e) { HF.toast(e.message); } });
     }
     const ban = $('#pushBanner');
     if (ban) {
@@ -862,7 +877,7 @@
   /* ================= hooks ================= */
   $('#chatAva').onclick = $('#chatName').onclick = () => { if (peer) window.HFPosts?.openUser(peer.id); };
   window.HFSocial = {
-    onTab(name) { tab = name; if (name === 'chats') { renderAuth(); if (me) { renderInbox(); refreshSocial(); } } if (name === 'profile') { renderAccountCard(); renderHealthCard(); } if (name === 'activity') renderHealthCard(); },
+    onTab(name) { tab = name; if (name === 'chats') { renderAuth(); if (me) { renderInbox(); refreshSocial(); } } if (name === 'profile') { renderAccountCard(); renderHealthCard(); renderPushUI(); } if (name === 'activity') renderHealthCard(); },
     onSave, shareMeal, checkName, api, avaHTML, esc, flameBadge, openChat, plural, refreshSocial,
     get friends() { return friends; },
     get me() { return me; },

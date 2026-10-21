@@ -9,6 +9,11 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { loadVapid, sendPush } from './push.js';
+import { createRequire } from 'node:module';
+// те же формулы, что в приложении; в пакете "type": "module" файл грузится как ESM и кладёт HFCalc в globalThis
+const calcMod = createRequire(import.meta.url)('../public/calc.js');
+const HFCalc = calcMod?.dayBonus ? calcMod : globalThis.HFCalc;
+if (!HFCalc?.dayBonus) throw new Error('calc.js не загрузился');
 
 const ROOT = fileURLToPath(new URL('../public/', import.meta.url));
 const DATA = process.env.DATA_DIR || fileURLToPath(new URL('../data/', import.meta.url));
@@ -51,7 +56,7 @@ CREATE TABLE IF NOT EXISTS health (user_id INTEGER NOT NULL, date TEXT NOT NULL,
 const stmts = new Map();
 const q = sql => { let st = stmts.get(sql); if (!st) { st = db.prepare(sql); stmts.set(sql, st); } return st; };
 // миграции: добавляем колонки, если их ещё нет
-for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER']])
+for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER'], ['users', 'share_summary', 'INTEGER NOT NULL DEFAULT 1']])
   if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${def}`);
 db.exec(`CREATE TABLE IF NOT EXISTS comment_likes (comment_id INTEGER NOT NULL, user_id INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (comment_id, user_id));
 CREATE INDEX IF NOT EXISTS posts_vis ON posts (vis, id);
@@ -173,6 +178,36 @@ function notify(userId, data, skipIfChat) {
 }
 const msgText = (kind, body, meta) => kind === 'text' ? body.slice(0, 120) : kind === 'post' ? `📌 Публикация: ${meta?.title || 'блюдо'}${body ? ` — ${body.slice(0, 80)}` : ''}` : kind === 'meal' ? `🍽 ${meta?.title || 'Блюдо'}${meta?.kcal ? ` · ${Math.round(meta.kcal)} ккал` : ''}`
   : kind === 'voice' ? '🎤 Голосовое сообщение' : kind === 'video' ? '📹 Видеосообщение' : '📷 Фото';
+
+/* ---------------- сводка дня для друзей ----------------
+   Берём облачную копию дневника (её присылает телефон) и считаем «сегодня» теми же формулами, что и приложение. */
+const syncCache = new Map();   // user_id → { at, data }
+function syncOf(u) {
+  if (!u.sync) return null;
+  const hit = syncCache.get(u.id); if (hit && hit.at === u.sync_at) return hit.data;
+  let data = null; try { data = JSON.parse(u.sync); } catch {}
+  if (syncCache.size > 2000) syncCache.clear();
+  syncCache.set(u.id, { at: u.sync_at, data }); return data;
+}
+const FAT_SHARE = { none: 0, light: 0.03, heavy: 0.08, included: 0 };
+function itemTotals(it) {
+  const g = (+it.grams || 0) / 100, kcal100 = +it.kcal_100 > 0 ? +it.kcal_100 : 4 * (+it.p_100 || 0) + 4 * (+it.c_100 || 0) + 9 * (+it.f_100 || 0);
+  const addFat = (+it.grams || 0) * (FAT_SHARE[it.fat] || 0);
+  return { kcal: kcal100 * g + addFat * 9, p: (+it.p_100 || 0) * g, f: (+it.f_100 || 0) * g + addFat, c: (+it.c_100 || 0) * g };
+}
+function daySummary(u) {
+  const db = syncOf(u); if (!db || !db.days) return null;
+  const date = dayKey(now()), day = db.days[date] || {}, s = db.settings || {}, prof = db.profile || {};
+  const t = { kcal: 0, p: 0, f: 0, c: 0 };
+  for (const m of day.meals || []) for (const it of m.items || []) { const x = itemTotals(it); t.kcal += x.kcal; t.p += x.p; t.f += x.f; t.c += x.c; }
+  const h = (db.health || {})[date] || {};
+  let bonus = 0; try { bonus = HFCalc.dayBonus({ ...prof, weight: +prof.weight || 75 }, day.acts || [], day.steps || h.steps || 0, h.active_kcal || 0).kcal; } catch {}
+  const r = Math.round;
+  return { date, kcal: r(t.kcal), p: r(t.p), f: r(t.f), c: r(t.c), goal: r((+s.goal || 2000) + bonus), pGoal: r(+s.p || 120), fGoal: r(+s.f || 65), cGoal: r((+s.c || 230) + bonus / 4),
+    water: r(+day.water || 0), waterGoal: r(+s.waterGoal || 2000), meals: (day.meals || []).length, workouts: (day.acts || []).length, bonus: r(bonus), updated: u.sync_at || null };
+}
+// сводку видят только друзья и только если человек её не скрыл
+const summaryFor = (me, u) => u.id !== me && u.share_summary !== 0 && areFriends(me, u.id) ? daySummary(u) : null;
 
 /* ---------------- публикации ---------------- */
 function shapePost(p, me) {
@@ -477,7 +512,7 @@ async function api(req, res, url) {
     notify(me.id, { title: 'Healthy Fit', body: 'Уведомления работают 👍', url: '/', tag: 'test' });
     return send(res, 200, { devices: n });
   }
-  if (p === '/api/me' && M === 'GET') return send(res, 200, { me: { ...pub(me), healthToken: me.health_token, admin: isAdmin(me) } });
+  if (p === '/api/me' && M === 'GET') return send(res, 200, { me: { ...pub(me), healthToken: me.health_token, admin: isAdmin(me), shareSummary: me.share_summary !== 0 } });
   if (p === '/api/admin/reports' && M === 'GET') {
     if (!isAdmin(me)) throw fail(403, 'Только для администратора');
     const st = url.searchParams.get('status') || 'new';
@@ -523,6 +558,7 @@ async function api(req, res, url) {
       if (q('SELECT 1 FROM users WHERE username = ? AND id != ?').get(username, me.id)) throw fail(409, 'Такой логин уже занят');
     }
     q('UPDATE users SET username = ?, name = ?, bio = ?, avatar = ?, stats = ? WHERE id = ?').run(username, name || me.name, bio, avatar, stats, me.id);
+    if (b.shareSummary !== undefined) q('UPDATE users SET share_summary = ? WHERE id = ?').run(b.shareSummary ? 1 : 0, me.id);
     return send(res, 200, { me: pub(q('SELECT * FROM users WHERE id = ?').get(me.id)) });
   }
   if (p === '/api/me/health-token' && M === 'POST') {
@@ -554,7 +590,7 @@ async function api(req, res, url) {
     const visible = canSee(me.id, u.id);
     const posts = q(`SELECT * FROM posts WHERE user_id = ? ${visible ? '' : "AND vis = 'public'"} ORDER BY id DESC LIMIT 120`).all(u.id).map(p => shapePost(p, me.id));
     const friendsCount = q(`SELECT COUNT(*) n FROM friends WHERE (a = ? OR b = ?) AND status = 'accepted'`).get(u.id, u.id).n;
-    return send(res, 200, { user: { ...pub(u), state: u.id === me.id ? 'self' : friendState(me.id, u.id), flame: u.id === me.id ? null : flame(me.id, u.id),
+    return send(res, 200, { user: { ...pub(u), state: u.id === me.id ? 'self' : friendState(me.id, u.id), flame: u.id === me.id ? null : flame(me.id, u.id), summary: summaryFor(me.id, u),
       postsCount: q('SELECT COUNT(*) n FROM posts WHERE user_id = ?').get(u.id).n, friendsCount }, posts, visible });
   }
   if (p === '/api/posts' && M === 'POST') {
@@ -649,7 +685,7 @@ async function api(req, res, url) {
     const rows = q(`SELECT u.*, f.status FROM friends f JOIN users u ON u.id = CASE WHEN f.a = ? THEN f.b ELSE f.a END WHERE f.a = ? OR f.b = ?`).all(me.id, me.id, me.id);
     const friends = [], incoming = [], sent = [];
     for (const r of rows) {
-      if (r.status === 'accepted') friends.push(withFlame(me.id, r));
+      if (r.status === 'accepted') { const sm = summaryFor(me.id, r); friends.push({ ...withFlame(me.id, r), today: sm ? { kcal: sm.kcal, goal: sm.goal, meals: sm.meals } : null }); }
       else (Number(r.status.split(':')[1]) === me.id ? sent : incoming).push(pub(r));
     }
     return send(res, 200, { friends, incoming, sent });

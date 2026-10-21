@@ -25,6 +25,27 @@
   }
   const bindGrid = root => root.querySelectorAll('[data-post]').forEach(b => b.onclick = () => openPost(+b.dataset.post));
 
+  /* ---------- сводка дня друга: кольцо калорий + БЖУ ---------- */
+  function summaryCard(u) {
+    const s = u.summary, first = esc((u.name || '').split(' ')[0]);
+    const pct = s.goal ? s.kcal / s.goal : 0, over = s.kcal - s.goal, R = 42, L = 2 * Math.PI * R;
+    const ago = s.updated ? Math.round((Date.now() - s.updated) / 60000) : null;
+    const when = ago == null ? '' : ago < 2 ? 'только что' : ago < 60 ? `${ago} мин назад` : ago < 1440 ? `${Math.round(ago / 60)} ч назад` : 'давно';
+    const bar = (lbl, v, goal, cls) => `<div class="sm-mac"><span class="sm-lbl"><i class="${cls}"></i>${lbl}</span>
+      <span class="sm-track"><i class="${cls}" style="transform:scaleX(${Math.min(1, goal ? v / goal : 0)})"></i></span><span class="sm-val"><b>${v}</b>/${goal} г</span></div>`;
+    if (!s.meals) return `<section class="sm-card sm-empty" aria-label="Сводка за сегодня"><p><b>${first} сегодня ещё ничего не записал(а)</b></p><p class="sub small">Норма — ${s.goal} ккал${when ? ` · обновлено ${when}` : ''}</p></section>`;
+    return `<section class="sm-card" aria-label="Сводка ${first} за сегодня: ${s.kcal} из ${s.goal} ккал">
+      <header class="sm-head"><b>Сегодня у ${first}</b><span class="sub small">${s.meals} ${plural(s.meals, 'приём', 'приёма', 'приёмов')} пищи${s.workouts ? ` · ${s.workouts} ${plural(s.workouts, 'тренировка', 'тренировки', 'тренировок')}` : ''}${when ? ` · ${when}` : ''}</span></header>
+      <div class="sm-body">
+        <div class="sm-ring${over > 0 ? ' over' : ''}">
+          <svg viewBox="0 0 100 100" aria-hidden="true"><circle class="sm-bg" cx="50" cy="50" r="${R}"/><circle class="sm-fg" cx="50" cy="50" r="${R}" stroke-dasharray="${L.toFixed(1)}" stroke-dashoffset="${(L * (1 - Math.min(1, pct))).toFixed(1)}"/></svg>
+          <div class="sm-num"><b>${s.kcal}</b><span>${over > 0 ? `+${over} сверх` : `из ${s.goal}`}</span></div>
+        </div>
+        <div class="sm-macs">${bar('Белки', s.p, s.pGoal, 'p')}${bar('Жиры', s.f, s.fGoal, 'f')}${bar('Углеводы', s.c, s.cGoal, 'c')}
+          <p class="sm-water"><svg aria-hidden="true"><use href="#i-drop"/></svg>${String(Math.round(s.water / 100) / 10).replace('.', ',')} из ${String(Math.round(s.waterGoal / 100) / 10).replace('.', ',')} л воды</p></div>
+      </div></section>`;
+  }
+
   /* ---------- свой профиль ---------- */
   let ptab = 'posts';
   async function renderOwn() {
@@ -62,6 +83,7 @@
         </div>
         <p class="uv-name">${esc(u.name)} ${S().flameBadge(u.flame)}</p>
         ${u.bio ? `<p class="uv-bio">${esc(u.bio)}</p>` : ''}
+        ${u.summary ? summaryCard(u) : ''}
         <div class="uv-actions">
           <button class="btn btn-${act[1]} btn-sm" id="uvFriend" ${act[2] ? 'disabled' : ''}>${act[0]}</button>
           ${u.state === 'friends' ? '<button class="btn btn-primary btn-sm" id="uvChat">Написать</button>' : ''}
@@ -181,7 +203,7 @@
   async function openPost(id, focusComment) {
     $('#postBody').innerHTML = '<div class="uv-loading"><div class="scan"></div></div>';
     setReply(null); openThreads.clear();
-    if ($('#postSheet').hidden) HF.openDialog($('#postSheet'), focusComment ? '#commentInput' : '[data-close]:not(.scrim)');
+    if ($('#postSheet').hidden) HF.openDialog($('#postSheet'), '[data-close]:not(.scrim)');   // клавиатуру не открываем сами
     try {
       const r = await api(`/api/posts/${id}`); post = r.post; comments = r.comments;
       $('#postBody').innerHTML = `<button class="icon-btn icon-btn-float post-close" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button>
@@ -189,7 +211,8 @@
         <h3 class="cmt-title" id="cmtTitle"></h3><ul class="comments" id="comments"></ul>`;
       bindCards($('#postBody'), [post]);
       renderComments();
-      if (focusComment) $('#commentInput').focus();
+      // пришли за комментариями — прокручиваем к ним, но не открываем клавиатуру
+      if (focusComment) requestAnimationFrame(() => $('#cmtTitle')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
     } catch (e) { $('#postBody').innerHTML = `<button class="icon-btn icon-btn-float post-close" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button><p class="sub uv-err">${esc(e.message)}</p>`; }
   }
   function commentHTML(c) {

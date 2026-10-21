@@ -59,6 +59,19 @@
   const actKcal = k => { const d = day(k), h = (db.health || {})[k] || {};
     return HFCalc.dayBonus(db.profile, d.acts, d.steps || h.steps || 0, h.active_kcal || 0).kcal; };
   const r0 = n => Math.round(n);
+  /* полноразмерные фото блюд (для ленты в хорошем качестве) — в IndexedDB, не в localStorage */
+  const photos = (() => {
+    let dbp = null;
+    const open = () => dbp ||= new Promise((res, rej) => { const r = indexedDB.open('hf-photos', 1); r.onupgradeneeded = () => r.result.createObjectStore('p'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    const tx = async (mode, fn) => { const d = await open(); return new Promise((res, rej) => { const t = d.transaction('p', mode), st = t.objectStore('p'), out = fn(st); t.oncomplete = () => res(out?.result); t.onerror = () => rej(t.error); }); };
+    return {
+      put: (id, data) => tx('readwrite', st => st.put({ data, at: Date.now() }, id)).catch(() => {}),
+      get: id => tx('readonly', st => st.get(id)).then(v => v?.data || '').catch(() => ''),
+      // старше 30 дней — удаляем, чтобы не копить
+      prune: () => tx('readwrite', st => { const c = st.openCursor(); c.onsuccess = () => { const cur = c.result; if (!cur) return; if (Date.now() - cur.value.at > 30 * 864e5) cur.delete(); cur.continue(); }; }).catch(() => {}),
+    };
+  })();
+  setTimeout(() => photos.prune(), 5000);
   // «надгробия» удалённых записей, чтобы синхронизация с другим устройством не воскрешала их
   const bury = id => { (db.tomb ||= []).push(String(id)); if (db.tomb.length > 1000) db.tomb.splice(0, db.tomb.length - 1000); };
   const unbury = id => { db.tomb = (db.tomb || []).filter(x => x !== String(id)); };
@@ -210,8 +223,10 @@
   function openDialog(el, focusSel) {
     // повторное открытие уже открытого окна не должно дублировать запись — иначе после закрытия экран «замерзал»
     const i = stack.findIndex(s => s.el === el);
-    if (i >= 0) { stack.push(stack.splice(i, 1)[0]); el.hidden = false; setInert(); return; }
+    if (i >= 0) { stack.push(stack.splice(i, 1)[0]); el.style.zIndex = String(21 + stack.length * 2); el.hidden = false; setInert(); return; }
     stack.push({ el, back: document.activeElement });
+    // каждое новое окно — поверх предыдущего (публикация из профиля друга, профиль из чата и т.д.)
+    el.style.zIndex = String(21 + stack.length * 2);
     document.querySelector('#toast.show')?.classList.add('top');   // уже показанный тост не должен закрывать новое окно
     el.hidden = false; document.body.style.overflow = 'hidden'; setInert();
     (el.querySelector(focusSel || '[data-close]:not(.scrim), button') || el).focus();
@@ -219,7 +234,7 @@
   function closeDialog(el) {
     const i = stack.findIndex(s => s.el === el); if (i < 0) return;
     const [{ back }] = stack.splice(i, 1);
-    el.hidden = true; if (!stack.length) document.body.style.overflow = ''; setInert();
+    el.hidden = true; el.style.zIndex = ''; if (!stack.length) document.body.style.overflow = ''; setInert();
     if (el === sheet) abortAnalysis();
     back?.focus?.();
   }
@@ -478,6 +493,7 @@
     const meal = { id: Math.random().toString(36).slice(2), time: time.getTime(), type: mealType(time), name: titleOf(draft.items),
       thumb: draft.thumb, items: draft.items.map(i => ({ ...i })), model: draft.model || '' };
     day(target).meals.push(meal);
+    if (draft.image) photos.put(meal.id, draft.image);
     Object.assign(draft, { editing: true, id: meal.id });   // повторное нажатие не создаст дубль
     const ok = save();
     closeDialog(sheet); render();
@@ -872,10 +888,12 @@
     box.setAttribute('aria-label', 'Калории за неделю: ' + rows.map(r => `${r.wd} ${Math.round(r.eaten)}`).join(', '));
   }
 
-  $('#shareMeal').onclick = () => {
+  $('#shareMeal').onclick = async () => {
     const d = draft;
+    // в ленту и друзьям — полное фото (1024 px); для блюда из дневника берём сохранённое, иначе миниатюру
+    const image = d.image || (d.id ? await photos.get(d.id) : '') || d.thumb;
     // отправили другу или в профиль — блюдо сразу засчитывается в дневник
-    window.HFSocial?.shareMeal({ name: $('#mealName').textContent, thumb: d.thumb, items: d.items.map(i => ({ ...i })), totals: mealTotals(d.items),
+    window.HFSocial?.shareMeal({ name: $('#mealName').textContent, thumb: d.thumb, image, items: d.items.map(i => ({ ...i })), totals: mealTotals(d.items),
       onSent: () => draft === d && !sheet.hidden ? commitDraft(true) : null });
   };
   /* ---------- «Назад»: закрыть верхнее окно или вернуться на прошлую вкладку ---------- */
