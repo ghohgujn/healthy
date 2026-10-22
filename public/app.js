@@ -289,7 +289,14 @@
     cam.stream?.getTracks().forEach(t => t.stop());
     cam.stream = null; video.srcObject = null;
   }
+  // iOS не запоминает разрешение на камеру для сайтов и приложений с экрана «Домой» — спрашивает при
+  // каждом запуске. Если доступа сейчас нет, открываем системный выбор «Снять фото / Медиатека»: он работает без всяких запросов.
+  // Решение принимаем синхронно (иначе iOS не даст открыть камеру), поэтому состояние узнаём заранее.
+  const iOSDevice = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  let camPerm = 'unknown';
+  try { navigator.permissions?.query({ name: 'camera' }).then(st => { camPerm = st.state; st.onchange = () => { camPerm = st.state; }; }, () => {}); } catch {}
   async function openCamera() {
+    if (iOSDevice && camPerm !== 'granted') { $('#photoInput').click(); return; }   // системное меню: «Снять фото» или «Медиатека»
     camEl.classList.remove('shot'); $('#camFrozen').hidden = true; $('#camFallback').hidden = true; $('#camResume').hidden = true;
     $('#camShutter').disabled = false; video.hidden = false; $('.cam-frame').hidden = false;
     $('#camHint').textContent = 'Вся тарелка в кадре, снимайте сверху';
