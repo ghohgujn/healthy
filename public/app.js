@@ -391,6 +391,7 @@
   function startAnalysis(image, thumb, text = '', source = 'photo') {
     draft = { image, thumb, items: [], question: '', options: [], caption: text, editing: false, day: selected, source };
     $('#caption').value = image ? '' : text; sheetMode(false);
+    $('#reanalyze').classList.toggle('ready', !image && !!text); $('#refineChips').querySelectorAll('.used').forEach(x => x.classList.remove('used'));
     if (thumb) $('#mealPhoto').src = thumb; else $('#mealPhoto').removeAttribute('src');
     $('#photoSrc').querySelector('span').textContent = source === 'voice' ? 'Записано голосом' : 'Записано текстом';
     $('#photoSrc').querySelector('use').setAttribute('href', source === 'voice' ? '#i-mic' : '#i-pen');
@@ -418,6 +419,9 @@
     const steps = !d.image ? [[0, 'Читаю описание…'], [1500, 'Подбираю продукты и порции…'], [5000, 'Считаю КБЖУ…'], [12000, 'Почти готово…'], [22000, 'Нейросеть сегодня неторопливая — ещё немного…']] : [[0, 'Отправляю фото…'], [1200, 'Смотрю на тарелку…'], [3500, 'Определяю продукты…'], [7000, 'Оцениваю граммы и жирность…'], [12000, 'Почти готово…'], [22000, 'Нейросеть сегодня неторопливая — ещё немного…']];
     const stepTimers = steps.map(([ms, text]) => setTimeout(() => { if (my === reqSeq) $('#loadingHint').textContent = text; }, ms));
     const slow = { clear: () => stepTimers.forEach(clearTimeout) };
+    // без фото: вместо крутилки показываем, что именно сказал человек — видно, что считаем его слова
+    $('#think').hidden = !!d.image; $('.scan').hidden = !d.image;
+    if (!d.image) $('#thinkQuote').textContent = `«${(d.caption || '').slice(0, 160)}${(d.caption || '').length > 160 ? '…' : ''}»`;
     showState('loading');
     try {
       let data;
@@ -456,7 +460,7 @@
   $('#refineChips').querySelectorAll('button').forEach(b => b.onclick = () => {
     const c = $('#caption'), v = c.value.trim();
     if (!v.toLowerCase().includes(b.textContent)) c.value = v ? `${v}, ${b.textContent}` : b.textContent;
-    $('#reanalyze').classList.remove('nudge'); void $('#reanalyze').offsetWidth; $('#reanalyze').classList.add('nudge');
+    $('#reanalyze').classList.add('ready'); b.classList.add('used');
   });
   $('#caption').addEventListener('input', () => $('#reanalyze').classList.toggle('ready', !!$('#caption').value.trim()));
   $('#caption').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#reanalyze').click(); } });
@@ -1062,17 +1066,19 @@
     const hit = (x, y) => { const r = vb.querySelector('.fv-ico').getBoundingClientRect(); return Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2)) < 52; };
     fab.addEventListener('pointerdown', e => {
       if (e.button || open) return;
+      document.documentElement.classList.add('no-select');   // долгое нажатие не выделяет текст на экране
       hold = { t: setTimeout(() => { hold.long = true; show(); }, 280) };
       try { fab.setPointerCapture(e.pointerId); } catch {}
     });
     fab.addEventListener('pointermove', e => { if (hold?.long) setHot(hit(e.clientX, e.clientY)); });
     fab.addEventListener('pointerup', e => {
+      document.documentElement.classList.remove('no-select');
       if (!hold) return; clearTimeout(hold.t); const h = hold; hold = null;
       if (!h.long) return;                       // короткий тап — обычный click откроет камеру
       suppressClick = true; setTimeout(() => { suppressClick = false; }, 400);
       if (hit(e.clientX, e.clientY)) pick();
     });
-    fab.addEventListener('pointercancel', () => { if (hold) { clearTimeout(hold.t); hold = null; } });
+    fab.addEventListener('pointercancel', () => { document.documentElement.classList.remove('no-select'); if (hold) { clearTimeout(hold.t); hold = null; } });
     fab.addEventListener('contextmenu', e => e.preventDefault());
     fab.onclick = () => { if (suppressClick) return; if (open) { hide(); return; } openCamera(); };
     vb.onclick = pick;

@@ -288,7 +288,12 @@ function clean(j) {
       grams: Math.max(0, Math.min(2000, num(i.grams))), grams_low: num(i.grams_low), grams_high: num(i.grams_high),
       kcal_100: Math.max(0, Math.min(900, num(i.kcal_100))), p_100: Math.max(0, Math.min(100, num(i.p_100))),
       f_100: Math.max(0, Math.min(100, num(i.f_100))), c_100: Math.max(0, Math.min(100, num(i.c_100))),
-    })).filter(i => i.grams > 0),
+    })).filter(i => i.grams > 0).map(i => {
+      // калорийность должна сходиться с БЖУ (4·Б + 9·Ж + 4·У): если модель ошиблась больше чем на 25% — считаем по БЖУ
+      const byMacro = 4 * i.p_100 + 9 * i.f_100 + 4 * i.c_100;
+      if (i.role !== 'drink' && byMacro > 5 && Math.abs(i.kcal_100 - byMacro) / byMacro > 0.25) i.kcal_100 = Math.round(byMacro);   // напитки не трогаем: у алкоголя калории не из БЖУ
+      return i;
+    }),
     confidence: pick(j.confidence, ['low', 'medium', 'high'], 'medium'),
     question: String(j.question || '').slice(0, 120),
     options: (Array.isArray(j.options) ? j.options : []).slice(0, 4).map(o => String(o).slice(0, 40)),
@@ -305,7 +310,8 @@ function aiBody(model, caption, image, withReasoning) {
     ? [{ type: 'text', text: PROMPT.replace('{caption}', caption) }, { type: 'image_url', image_url: /^openai\//.test(model.id) ? { url: image, detail: 'auto' } : { url: image } }]
     : [{ type: 'text', text: PROMPT_TEXT.replace('{caption}', caption) }];
   const b = { model: model.id, max_completion_tokens: AI_MAX_TOKENS, messages: [{ role: 'user', content }] };
-  if (withReasoning && REASONING !== 'off' && /^openai\//.test(model.id)) b.reasoning_effort = REASONING;
+  // описание словами: картинки нет, запрос лёгкий — можно дать модели подумать чуть дольше ради точности
+  if (withReasoning && REASONING !== 'off' && /^openai\//.test(model.id)) b.reasoning_effort = image ? REASONING : (process.env.AI_REASONING_TEXT || (REASONING === 'low' ? 'medium' : REASONING));
   return JSON.stringify(b);
 }
 async function callAI(body, signal) {

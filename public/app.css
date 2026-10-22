@@ -1532,3 +1532,51 @@ input, textarea, select { font-size: max(16px, 1em); }
   80% { transform: translateY(-116px) scale(0.97, 1.03); }
   100% { transform: translateY(-112px) scale(1); }
 }
+
+/* ===== v27: белая капля ближе к камере, без выделения текста, «думает» по словам, спокойные подсказки ===== */
+html.no-select, html.no-select * { -webkit-user-select: none !important; user-select: none !important; -webkit-touch-callout: none !important; }
+.fab, .fab-voice, .fab-goo { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+/* капля белая, крупнее, отрывается невысоко — палец дотягивается не глядя */
+.goo-drop { background: oklch(100% 0 0); width: 68px; height: 68px; margin-left: -34px; bottom: 0; }
+@keyframes yolk {
+  0% { transform: translateY(0) scale(0.6, 0.6); }
+  35% { transform: translateY(-34px) scale(0.8, 1.12); }
+  60% { transform: translateY(-82px) scale(1.06, 0.94); }
+  80% { transform: translateY(-92px) scale(0.97, 1.03); }
+  100% { transform: translateY(-88px) scale(1); }
+}
+.fab-voice { width: 68px; height: 68px; margin-left: -34px; bottom: calc(env(safe-area-inset-bottom, 0px) + 22px + 88px); }
+.fv-ico { width: 68px; height: 68px; background: oklch(100% 0 0); color: oklch(19% 0.01 260);
+  box-shadow: 0 0 0 1px oklch(0% 0 0 / 0.06), 0 10px 26px oklch(0% 0 0 / 0.22); }
+.fv-ico svg { width: 32px; height: 32px; }
+.fab-voice.hot .fv-ico { transform: scale(1.12); background: var(--color-danger); color: oklch(100% 0 0); }
+.fv-lbl { display: none; }
+
+/* шапка блюда без фото: без серой полосы и рамок */
+.sheet-photo:has(img:not([src])) { background: transparent; height: 56px; }
+.sheet-photo:has(img:not([src])) .photo-src { left: var(--space-lg); padding: 0; background: none; color: var(--color-ink); font-size: var(--text-base, 1rem); font-weight: 700; gap: 10px; box-shadow: none; border: 0; }
+.photo-src svg { width: 18px; height: 18px; padding: 8px; box-sizing: content-box; border-radius: 50%; background: var(--color-ink); color: var(--color-on-ink); }
+.sheet-photo:has(img:not([src])) .icon-btn-float { background: var(--color-paper-2); box-shadow: none; }
+
+/* пока считаем по словам: цитата того, что сказали, и «печатающие» точки */
+.think { display: grid; justify-items: center; gap: 12px; max-width: 320px; margin-bottom: var(--space-xs); }
+.think[hidden], .scan[hidden] { display: none; }
+.think-ico { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: var(--color-ink); color: var(--color-on-ink); animation: thinkpulse 1.6s ease-in-out infinite; }
+.think-ico svg { width: 26px; height: 26px; }
+@keyframes thinkpulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-ink) 22%, transparent); } 50% { box-shadow: 0 0 0 12px transparent; } }
+.think-quote { margin: 0; font-size: 17px; line-height: 1.4; font-weight: 600; color: var(--color-ink); text-wrap: balance; }
+.think-dots { display: inline-flex; gap: 5px; }
+.think-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--color-muted); animation: tdot 1.2s ease-in-out infinite; }
+.think-dots i:nth-child(2) { animation-delay: 0.15s; } .think-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes tdot { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-5px); opacity: 1; } }
+
+/* подсказки нейросети: без прыжков — выбранная просто отмечается */
+.refine-go.nudge { animation: none; }
+.refine-go { transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.refine-go:active { transform: none; opacity: 0.8; }
+.refine-chips button.used { background: var(--color-ink); color: var(--color-on-ink); border-color: var(--color-ink); }
+@media (prefers-reduced-motion: reduce) { .think-ico, .think-dots i { animation: none; } }
+.sheet-photo img:not([src]) { display: none; }
+.sheet-photo:has(img:not([src])) .icon-btn-float { background: var(--color-paper-2); color: var(--color-ink); box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.sheet-photo:has(img:not([src])) { border: 0; box-shadow: none; }
+.sheet:has(.sheet-photo img:not([src])) .grabber { background: var(--color-rule-strong); box-shadow: none; }

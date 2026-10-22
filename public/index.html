@@ -264,7 +264,7 @@
 
     <!-- удержание камеры: из кнопки «вытекает» капля «Голосом», как желток отделяется от белка -->
     <div class="fab-goo" id="fabGoo" aria-hidden="true"><span class="goo-base"></span><span class="goo-drop"></span></div>
-    <button class="fab-voice" id="fabVoice" tabindex="-1" aria-hidden="true"><span class="fv-ico"><svg><use href="#i-mic"/></svg></span><span class="fv-lbl">Голосом</span></button>
+    <button class="fab-voice" id="fabVoice" tabindex="-1" aria-hidden="true" aria-label="Записать еду голосом"><span class="fv-ico"><svg><use href="#i-mic"/></svg></span></button>
     <button class="fab" id="openCamera" aria-label="Сфотографировать еду. Удерживайте — записать голосом">
       <svg><use href="#i-camera"/></svg>
     </button>
@@ -308,6 +308,7 @@
       <div class="sheet-body">
         <div class="loading" id="mealLoading">
           <div class="scan" aria-hidden="true"></div>
+          <div class="think" id="think" hidden><span class="think-ico" aria-hidden="true"><svg><use href="#i-mic"/></svg></span><p class="think-quote" id="thinkQuote"></p><span class="think-dots" aria-hidden="true"><i></i><i></i><i></i></span></div>
           <p class="h2">Считаю…</p>
           <p class="sub" id="loadingHint">Определяю продукты и вес. Обычно 5–15 секунд.</p>
           <button class="btn btn-ghost btn-sm" id="cancelAnalyze">Отменить</button>
