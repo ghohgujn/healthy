@@ -17,6 +17,25 @@
   <link rel="preload" href="/fonts/onest-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="app.css">
+  <script>
+    /* страховка запуска: если что-то сломалось, вместо пустого экрана — понятное сообщение и кнопка «Обновить» */
+    (function () {
+      var errs = [];
+      window.addEventListener('error', function (e) { errs.push((e.message || 'error') + ' @ ' + String(e.filename || '').split('/').pop() + ':' + (e.lineno || 0)); });
+      window.addEventListener('unhandledrejection', function (e) { errs.push('promise: ' + String(e.reason && e.reason.message || e.reason)); });
+      setTimeout(function () {
+        if (window.HF) return;
+        try { fetch('/api/clientlog', { method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true, body: JSON.stringify({ where: 'boot', msg: errs.join(' | ').slice(0, 900) || 'app.js не запустился', ua: navigator.userAgent }) }); } catch (x) {}
+        var d = document.createElement('div');
+        d.setAttribute('role', 'alert');
+        d.style.cssText = 'position:fixed;inset:0;z-index:999;display:grid;place-content:center;gap:12px;padding:24px;text-align:center;background:#fafaf7;color:#1d1f24;font:16px/1.4 system-ui,sans-serif';
+        d.innerHTML = '<b style="font-size:20px">Приложение не запустилось</b><span>Проверьте интернет и обновите страницу.</span><button style="min-height:48px;padding:0 24px;border:0;border-radius:999px;background:#1d1f24;color:#fff;font:inherit;font-weight:700">Обновить</button><small style="opacity:.55;word-break:break-word"></small>';
+        d.querySelector('small').textContent = errs.slice(0, 2).join(' · ');
+        d.querySelector('button').onclick = function () { location.reload(); };
+        document.body.appendChild(d);
+      }, 7000);
+    })();
+  </script>
   <script src="config.js"></script>
 </head>
 <body>

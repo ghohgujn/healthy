@@ -152,14 +152,10 @@
   }
 
   const GLASS = 'M3 3h22l-2.6 30.2a3 3 0 0 1-3 2.8H8.6a3 3 0 0 1-3-2.8z';
-  // волна шире стакана в два периода — сдвиг на один период даёт бесшовную анимацию
-  const WAVE = (y, a) => `M-28 ${y}` + 'q3.5-' + a + ' 7 0t7 0'.repeat(1) + ' t7 0'.repeat(6) + ' V40H-28z';
   function glassSvg(i) {
     return `<svg viewBox="0 0 28 38" aria-hidden="true"><defs><clipPath id="gc${i}"><path d="${GLASS}"/></clipPath></defs>
       <path class="g-body" d="${GLASS}"/>
-      <g clip-path="url(#gc${i})"><g class="g-fill"><path class="g-wave2" d="${WAVE(12, 2.4)}"/><path class="g-wave" d="${WAVE(13, 3)}"/></g>
-        <circle class="g-bub" cx="9" cy="33" r="1"/><circle class="g-bub" cx="17" cy="35" r="0.8"/><circle class="g-bub" cx="13" cy="34" r="1.2"/></g>
-      <rect class="g-stream" x="12.8" y="-14" width="2.4" height="30" rx="1.2"/>
+      <g clip-path="url(#gc${i})"><rect class="g-water" x="0" y="12" width="28" height="26"/><path class="g-wave" d="M0 13q3.5-3 7 0t7 0 7 0 7 0v3H0z"/></g>
       <path class="g-shine" d="M8.2 10l1.3 17"/><path class="g-plus" d="M14 17v8M10 21h8"/><path class="g-out" d="${GLASS}"/></svg>`;
   }
   let waterPrev = null;   // что было нарисовано в прошлый раз — чтобы налить/вылить только изменившиеся стаканы
@@ -176,7 +172,7 @@
       const b = document.createElement('button');
       const full = i < shown;
       b.className = 'glass' + (full ? ' full' : i === shown ? ' next' : '') + (full && i >= prev ? ' pour' : !full && i < prev ? ' drain' : '') + (full && i === shown - 1 ? ' top' : '');
-      if (full && i >= prev) b.style.setProperty('--d', `${(i - prev) * 110}ms`);
+      if (full && i >= prev) b.style.setProperty('--d', `${(i - prev) * 220}ms`);
       b.innerHTML = glassSvg(i) + (i === count - 1 && filled > count ? `<span class="glass-extra">+${filled - count}</span>` : '');
       b.setAttribute('aria-label', full ? (i === shown - 1 ? `Убрать стакан, выпито ${filled}` : `Оставить ${i + 1} стакан(а)`) : `Выпито ${i + 1} стакан(а)`);
       b.onclick = () => {

@@ -1307,33 +1307,15 @@ input, textarea, select { font-size: max(16px, 1em); }
 #recTrash { display: none; }   /* в режиме «без рук» отмена — текстовой кнопкой «Отмена», корзина дублировала её */
 
 /* ===== v24: вода наливается, порция, «Поделиться», мультипост, анимации дневника ===== */
-/* стакан: вода поднимается снизу с волной, сверху льётся струйка, всплывают пузырьки */
-.glass .g-fill { transform: translateY(28px); transition: transform 600ms cubic-bezier(.3,.7,.3,1); }
-.glass.full .g-fill { transform: none; }
-.glass .g-wave { fill: var(--color-water); }
-.glass .g-wave2 { fill: var(--color-water-3); opacity: 0.7; }
-.glass .g-wave, .glass .g-wave2 { transform-box: view-box; }
-.glass.top .g-wave { animation: gwave 2.6s linear infinite; }
-.glass.top .g-wave2 { animation: gwave 3.4s linear infinite reverse; }
-.glass .g-bub { fill: oklch(100% 0 0 / 0.75); opacity: 0; }
-.glass .g-stream { fill: var(--color-water); opacity: 0; transform-box: fill-box; transform-origin: 50% 0; }
-.glass.pour .g-fill { animation: gfill 900ms cubic-bezier(.3,.7,.3,1) var(--d, 0ms) both; }
-.glass.pour .g-wave { animation: gwave 0.7s linear infinite; }
-.glass.pour .g-wave2 { animation: gwave 0.9s linear infinite reverse; }
-.glass.pour .g-stream { animation: gstream 900ms ease-out var(--d, 0ms) both; }
-.glass.pour .g-bub { animation: gbub 1100ms ease-out calc(var(--d, 0ms) + 250ms) both; }
-.glass.pour .g-bub:nth-of-type(2) { animation-delay: calc(var(--d, 0ms) + 420ms); }
-.glass.pour .g-bub:nth-of-type(3) { animation-delay: calc(var(--d, 0ms) + 560ms); }
-.glass.pour .g-out { animation: gglow 900ms ease-out var(--d, 0ms) both; }
-.glass.pour { animation: gpop 900ms cubic-bezier(.3,1.6,.5,1) var(--d, 0ms) both; }
-.glass.drain .g-fill { animation: gdrain 480ms cubic-bezier(.5,0,.7,.4) both; }
-@keyframes gwave { to { transform: translateX(14px); } }
-@keyframes gfill { from { transform: translateY(28px); } 70% { transform: translateY(-1.2px); } to { transform: none; } }
-@keyframes gdrain { from { transform: none; } to { transform: translateY(28px); } }
-@keyframes gstream { 0% { opacity: 0; transform: scaleY(0); } 15% { opacity: 1; transform: scaleY(1); } 70% { opacity: 1; transform: translateY(0) scaleY(1); } 100% { opacity: 0; transform: translateY(14px) scaleY(0.2); } }
-@keyframes gbub { 0% { opacity: 0; transform: translateY(0); } 25% { opacity: 1; } 100% { opacity: 0; transform: translateY(-20px); } }
-@keyframes gglow { 0% { stroke: var(--color-rule-strong); } 100% { stroke: var(--color-water); } }
-@keyframes gpop { 0% { transform: scale(1); } 30% { transform: scale(0.92); } 60% { transform: scale(1.06); } 100% { transform: scale(1); } }
+/* стакан: вода спокойно поднимается снизу — без струйки и бегущих волн */
+.glass.pour .g-water { animation: gfill 1400ms cubic-bezier(.33,.0,.2,1) var(--d, 0ms) both; }
+.glass.pour .g-wave, .glass.pour .g-shine { animation: gshow 500ms ease-out calc(var(--d, 0ms) + 1100ms) both; }
+.glass.pour .g-out { animation: gglow 1400ms ease-out var(--d, 0ms) both; }
+.glass.drain .g-water { animation: gdrain 700ms cubic-bezier(.4,0,.6,1) both; }
+@keyframes gfill { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+@keyframes gdrain { from { transform: scaleY(1); } to { transform: scaleY(0); } }
+@keyframes gshow { from { opacity: 0; } to { opacity: 1; } }
+@keyframes gglow { from { stroke: var(--color-rule-strong); } to { stroke: var(--color-water); } }
 
 /* «Сколько съели» */
 .portion { display: grid; gap: 6px; margin: var(--space-md) 0 var(--space-xs); }
@@ -1382,13 +1364,9 @@ input, textarea, select { font-size: max(16px, 1em); }
 .pg-multi { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; color: oklch(100% 0 0); filter: drop-shadow(0 1px 2px oklch(0% 0 0 / 0.5)); }
 .pg-multi svg { width: 100%; height: 100%; }
 
-/* дневник: карточки въезжают по очереди, новый приём — с подсветкой */
-@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-#tab-today:not([hidden]) > section, #tab-today:not([hidden]) > .card { animation: rise 420ms var(--ease-out) both; }
-#tab-today:not([hidden]) > :nth-child(2) { animation-delay: 40ms; } #tab-today:not([hidden]) > :nth-child(3) { animation-delay: 80ms; }
-#tab-today:not([hidden]) > :nth-child(4) { animation-delay: 120ms; } #tab-today:not([hidden]) > :nth-child(n+5) { animation-delay: 160ms; }
-.meal-list li { animation: rise 360ms var(--ease-out) both; }
-.meal-list li:nth-child(2) { animation-delay: 50ms; } .meal-list li:nth-child(3) { animation-delay: 100ms; } .meal-list li:nth-child(n+4) { animation-delay: 140ms; }
+/* дневник: новые карточки въезжают, новый приём — с подсветкой */
+@keyframes riseIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.meal-list li.fresh { animation: riseIn 420ms var(--ease-out); }
 .meal-list li.fresh .meal { animation: fresh 1.4s var(--ease-out) both; }
 @keyframes fresh { 0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-ok) 60%, transparent); transform: scale(0.96); } 30% { box-shadow: 0 0 0 6px color-mix(in oklch, var(--color-ok) 25%, transparent); transform: scale(1.01); } 100% { box-shadow: 0 0 0 0 transparent; transform: none; } }
 .ring-fg { transition: stroke-dashoffset 900ms cubic-bezier(.3,.7,.3,1); }
@@ -1397,12 +1375,11 @@ input, textarea, select { font-size: max(16px, 1em); }
 .cam.shot #camFrozen { animation: shotin 380ms cubic-bezier(.2,.8,.2,1) both; }
 @keyframes shotin { from { transform: scale(1.06); filter: brightness(1.6); } to { transform: none; filter: none; } }
 #mealPhoto { transition: transform 600ms var(--ease-out); }
-.sheet-wrap:not([hidden]) #mealResult:not([hidden]) .total { animation: rise 380ms var(--ease-out) both; }
+.sheet-wrap:not([hidden]) #mealResult:not([hidden]) .total { animation: riseIn 380ms var(--ease-out) both; }
 .sheet-wrap:not([hidden]) #mealResult:not([hidden]) .total:nth-child(2) { animation-delay: 50ms; } .sheet-wrap:not([hidden]) #mealResult:not([hidden]) .total:nth-child(3) { animation-delay: 100ms; } .sheet-wrap:not([hidden]) #mealResult:not([hidden]) .total:nth-child(4) { animation-delay: 150ms; }
-.sheet-wrap:not([hidden]) #mealResult:not([hidden]) .item { animation: rise 360ms var(--ease-out) both; animation-delay: calc(120ms + var(--k, 0) * 45ms); }
+.sheet-wrap:not([hidden]) #mealResult:not([hidden]) .item { animation: riseIn 360ms var(--ease-out) both; animation-delay: calc(120ms + var(--k, 0) * 45ms); }
 @media (prefers-reduced-motion: reduce) {
-  .glass .g-fill, .glass.pour .g-fill, .glass.drain .g-fill, .glass.pour, .glass .g-wave, .glass .g-wave2, .glass.pour .g-stream, .glass.pour .g-bub,
-  #tab-today > *, .meal-list li, .meal-list li.fresh .meal, .total, .item { animation: none !important; transition: none !important; }
+  .glass.pour .g-water, .glass.drain .g-water, .glass.pour .g-wave, .glass.pour .g-shine, .meal-list li.fresh, .meal-list li.fresh .meal, .total, .item { animation: none !important; transition: none !important; }
 }
 .sheet-wrap:not([hidden]) #mealResult:not([hidden]) #items.rescale .item { animation: rescale 520ms var(--ease-out) both; animation-delay: calc(var(--k, 0) * 40ms); }
 #mealFoot #saveMeal { min-width: 0; padding-inline: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1452,9 +1429,8 @@ input, textarea, select { font-size: max(16px, 1em); }
 .fab-opt.hot .fo-ico { transform: scale(1.18); background: var(--color-ink); color: var(--color-on-ink); }
 .fab-opt[data-mode="voice"].hot .fo-ico { background: var(--color-danger); color: oklch(100% 0 0); }
 .fab.radial-on { transform: scale(0.9); box-shadow: 0 0 0 10px color-mix(in oklch, var(--color-ink) 10%, transparent), var(--shadow-fab); }
-.fab-radial::before { content: ''; position: fixed; inset: 0; background: color-mix(in oklch, var(--color-paper) 55%, transparent); opacity: 0; transition: opacity 200ms var(--ease-out); pointer-events: none; z-index: -1;
-  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
-.fab-radial.open::before { opacity: 1; }
+.fab-radial::before { content: ''; position: fixed; inset: 0; background: color-mix(in oklch, var(--color-paper) 60%, transparent); opacity: 0; visibility: hidden; transition: opacity 200ms var(--ease-out), visibility 0s 200ms; pointer-events: none; z-index: -1; }
+.fab-radial.open::before { opacity: 1; visibility: visible; transition: opacity 200ms var(--ease-out); }
 .fab { z-index: 7; }
 
 /* лист «Что вы съели?» */
