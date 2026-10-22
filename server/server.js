@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS health (user_id INTEGER NOT NULL, date TEXT NOT NULL,
 const stmts = new Map();
 const q = sql => { let st = stmts.get(sql); if (!st) { st = db.prepare(sql); stmts.set(sql, st); } return st; };
 // миграции: добавляем колонки, если их ещё нет
-for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER'], ['users', 'share_summary', 'INTEGER NOT NULL DEFAULT 1'], ['posts', 'gallery', 'TEXT'], ['comments', 'kind', "TEXT NOT NULL DEFAULT 'text'"], ['comments', 'media', 'TEXT'], ['comments', 'meta', 'TEXT']])
+for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER'], ['users', 'share_summary', 'INTEGER NOT NULL DEFAULT 1'], ['posts', 'gallery', 'TEXT'], ['comments', 'kind', "TEXT NOT NULL DEFAULT 'text'"], ['users', 'seen_at', 'INTEGER'], ['comments', 'media', 'TEXT'], ['comments', 'meta', 'TEXT']])
   if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${def}`);
 db.exec(`CREATE TABLE IF NOT EXISTS comment_likes (comment_id INTEGER NOT NULL, user_id INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (comment_id, user_id));
 CREATE INDEX IF NOT EXISTS posts_vis ON posts (vis, id);
@@ -111,7 +111,9 @@ function checkPass(p, stored) {
 function cookieToken(req) { const m = /(?:^|;\s*)hf=([A-Za-z0-9_-]{20,})/.exec(req.headers.cookie || ''); return m && m[1]; }
 function userOf(req) {
   const t = cookieToken(req); if (!t) return null;
-  return q('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?').get(sha(t)) || null;
+  const u = q('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?').get(sha(t)) || null;
+  if (u && now() - (u.seen_at || 0) > 300_000) { try { q('UPDATE users SET seen_at = ? WHERE id = ?').run(now(), u.id); } catch {} }   // «был в сети» — не чаще раза в 5 минут
+  return u;
 }
 function need(req) { const u = userOf(req); if (!u) throw fail(401, 'Войдите в аккаунт'); return u; }
 function startSession(res, userId) {
@@ -222,9 +224,10 @@ function shapePost(p, me) {
 }
 // открытые публикации видят все; закрытые — автор и его друзья
 const canSeePost = (me, p) => p.vis === 'public' || canSee(me, p.user_id);
+const isAdminId = id => isAdmin(q('SELECT username FROM users WHERE id = ?').get(id));
 function visiblePost(id, me) {
   const p = q('SELECT * FROM posts WHERE id = ?').get(id);
-  if (!p || !canSeePost(me, p)) throw fail(404, 'Публикация не найдена');
+  if (!p || !(canSeePost(me, p) || isAdminId(me))) throw fail(404, 'Публикация не найдена');
   return p;
 }
 const shapeComment = (c, me) => {
@@ -536,6 +539,21 @@ async function api(req, res, url) {
       reasons: JSON.parse(r.reasons || '[]'), comment: r.comment, title: r.title, model: r.model, confidence: r.confidence, caption: r.caption,
       ai: r.ai ? JSON.parse(r.ai) : null, final: JSON.parse(r.final || '[]'), media: r.media ? `/media/${r.media}` : '', note: r.note || '' })) });
   }
+  // все зарегистрированные: кто, когда пришёл, когда был в сети, активность
+  if (p === '/api/admin/users' && M === 'GET') {
+    if (!isAdmin(me)) throw fail(403, 'Только для администратора');
+    const term = String(url.searchParams.get('q') || '').trim().replace(/[%_]/g, '').slice(0, 30);
+    const rows = q(`SELECT u.id, u.username, u.name, u.avatar, u.bio, u.stats, u.created, u.seen_at, u.sync_at,
+        (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id) posts,
+        (SELECT COUNT(*) FROM friends f WHERE (f.a = u.id OR f.b = u.id) AND f.status = 'accepted') friends,
+        (SELECT MAX(created) FROM sessions s WHERE s.user_id = u.id) login
+      FROM users u WHERE u.username != ? AND (? = '' OR u.username LIKE ? OR u.name LIKE ?) ORDER BY COALESCE(u.seen_at, u.created) DESC LIMIT 500`)
+      .all(BOT_USERNAME, term, term + '%', '%' + term + '%');
+    const total = q('SELECT COUNT(*) n FROM users WHERE username != ?').get(BOT_USERNAME).n, day = now() - 864e5, week = now() - 7 * 864e5;
+    return send(res, 200, { total, active1: q('SELECT COUNT(*) n FROM users WHERE seen_at > ?').get(day).n, active7: q('SELECT COUNT(*) n FROM users WHERE seen_at > ?').get(week).n,
+      newWeek: q('SELECT COUNT(*) n FROM users WHERE created > ? AND username != ?').get(week, BOT_USERNAME).n,
+      users: rows.map(u => ({ ...pub(u), created: u.created, seen: u.seen_at || u.login || null, sync: u.sync_at || null, posts: u.posts, friends: u.friends, admin: isAdmin(u) })) });
+  }
   if (p === '/api/admin/stats' && M === 'GET') {
     if (!isAdmin(me)) throw fail(403, 'Только для администратора');
     const okRuns = aiStats.filter(x => x.ok), last = okRuns.slice(-50), ms = last.map(x => x.ms).sort((a, b) => a - b);
@@ -601,10 +619,10 @@ async function api(req, res, url) {
   const um = /^\/api\/users\/(\d+)$/.exec(p);
   if (um && M === 'GET') {
     const u = q('SELECT * FROM users WHERE id = ?').get(Number(um[1])); if (!u) throw fail(404, 'Пользователь не найден');
-    const visible = canSee(me.id, u.id);
+    const admin = isAdmin(me), visible = admin || canSee(me.id, u.id);   // администратор видит профиль целиком
     const posts = q(`SELECT * FROM posts WHERE user_id = ? ${visible ? '' : "AND vis = 'public'"} ORDER BY id DESC LIMIT 120`).all(u.id).map(p => shapePost(p, me.id));
     const friendsCount = q(`SELECT COUNT(*) n FROM friends WHERE (a = ? OR b = ?) AND status = 'accepted'`).get(u.id, u.id).n;
-    return send(res, 200, { user: { ...pub(u), state: u.id === me.id ? 'self' : friendState(me.id, u.id), flame: u.id === me.id ? null : flame(me.id, u.id), summary: summaryFor(me.id, u),
+    return send(res, 200, { user: { ...pub(u), state: u.id === me.id ? 'self' : friendState(me.id, u.id), flame: u.id === me.id ? null : flame(me.id, u.id), summary: admin && u.id !== me.id && u.username !== BOT_USERNAME ? daySummary(u) : summaryFor(me.id, u),
       postsCount: q('SELECT COUNT(*) n FROM posts WHERE user_id = ?').get(u.id).n, friendsCount }, posts, visible });
   }
   if (p === '/api/posts' && M === 'POST') {

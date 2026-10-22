@@ -32,6 +32,9 @@ window.HFMockApi = (() => {
       }
       if (!st.me) throw Object.assign(new Error('Войдите в аккаунт'), { status: 401 });
       if (p === '/api/admin/stats') return { runs: 0 };
+      if (p === '/api/admin/users') { const qq = (u.searchParams.get('q') || '').toLowerCase(); const all = [{ ...(st.me || {}), created: t - 30 * 864e5, seen: Date.now(), posts: st.posts.filter(x => x.user_id === 1).length, friends: 2, admin: true },
+        ...users.filter(x => !x.bot).map((x, i) => ({ ...x, created: t - (20 - i * 5) * 864e5, seen: t - (i + 1) * 47 * 6e4, posts: st.posts.filter(y => y.user_id === x.id).length, friends: i + 1 }))].filter(x => !qq || (x.username + ' ' + x.name).toLowerCase().includes(qq));
+        return { total: 4, active1: 3, active7: 4, newWeek: 1, users: all }; }
       if (p === '/api/admin/reports') { const sx = u.searchParams.get('status'); const all = st.reports || [];
         return { counts: { new: all.filter(r => r.status === 'new').length }, reports: all.filter(r => sx === 'all' || r.status === sx) }; }
       const arm = /^\/api\/admin\/reports\/(\d+)$/.exec(p); if (arm) { const r = (st.reports || []).find(x => x.id === +arm[1]); if (r) r.status = body.status; return { ok: true }; }

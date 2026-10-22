@@ -129,8 +129,10 @@
       <p class="sub small" id="unameHint"></p>
       <label class="push-row share-sum"><div><b>Друзья видят мою сводку</b><p class="sub small">Калории и БЖУ за сегодня — только друзьям</p></div>
         <input type="checkbox" class="switch" id="shareSummary" ${me.shareSummary === false ? '' : 'checked'}></label>
+      ${me.admin ? '<div class="push-row"><div><b>Админ-панель</b><p class="sub small">Пользователи, разбор ошибок, скорость нейросети</p></div><button class="btn btn-ghost btn-sm" id="adminOpen">Открыть</button></div>' : ''}
       ${canOfferInstall() ? '<div class="push-row"><div><b>Приложение на экране «Домой»</b><p class="sub small">Быстрый запуск и уведомления</p></div><button class="btn btn-ghost btn-sm" id="installOpen">Установить</button></div>' : ''}`;
     $('#installOpen')?.addEventListener('click', openInstall);
+    $('#adminOpen')?.addEventListener('click', () => window.HFAdmin?.open());
     $('#shareSummary')?.addEventListener('change', async e => {
       const on = e.target.checked;
       try { await api('/api/me', { method: 'PATCH', body: { shareSummary: on } }); me.shareSummary = on; HF.toast(on ? 'Друзья видят вашу сводку за день' : 'Сводка скрыта от друзей'); }

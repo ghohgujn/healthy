@@ -594,6 +594,18 @@
   </div>
 
   <!-- Developer panel (5 taps on «О себе») -->
+  <div class="sheet-wrap" id="usersSheet" hidden>
+    <div class="scrim" data-close></div>
+    <section class="sheet users-sheet" role="dialog" aria-modal="true" aria-labelledby="usersTitle">
+      <div class="sheet-head"><h2 class="h2" id="usersTitle">Пользователи</h2><button class="icon-btn" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button></div>
+      <div class="sheet-body">
+        <div class="au-stats" id="auStats"></div>
+        <label class="search au-search"><svg aria-hidden="true"><use href="#i-search"/></svg><input class="input" id="auSearch" type="search" placeholder="Логин или имя" autocomplete="off" autocapitalize="none" aria-label="Поиск пользователя"></label>
+        <ul class="au-list" id="auList"></ul>
+      </div>
+    </section>
+  </div>
+
   <div class="sheet-wrap" id="devSheet" hidden>
     <div class="scrim" data-close></div>
     <section class="sheet sheet-settings" role="dialog" aria-modal="true" aria-labelledby="devTitle">
@@ -606,7 +618,7 @@
           <label class="radio"><input type="radio" name="model" value="gemini"><span><b>Gemini</b> · 3.5 Flash<small>Сильна в оценке граммов</small></span></label>
         </fieldset>
         <div class="group dev-info" id="devInfo"></div>
-        <div class="row-btns"><button class="btn btn-ghost btn-sm" id="devOnboard">Показать онбординг</button><button class="btn btn-ghost btn-sm" id="devHealth">Проверить сервер</button><button class="btn btn-ghost btn-sm" id="devCases">Разбор ошибок</button></div>
+        <div class="row-btns"><button class="btn btn-ghost btn-sm" id="devOnboard">Показать онбординг</button><button class="btn btn-ghost btn-sm" id="devHealth">Проверить сервер</button><button class="btn btn-ghost btn-sm" id="devCases">Разбор ошибок</button><button class="btn btn-primary btn-sm" id="devUsers">Пользователи</button></div>
       </div>
     </section>
   </div>

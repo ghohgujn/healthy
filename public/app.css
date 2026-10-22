@@ -1671,3 +1671,21 @@ html.no-select, html.no-select * { -webkit-user-select: none !important; user-se
 .fab-voice.open::after { animation: fvarrow 1s ease-in-out 0.5s infinite; }
 @keyframes fvarrow { 0% { opacity: 0; transform: translateY(8px) rotate(45deg); } 50% { opacity: 1; } 100% { opacity: 0; transform: translateY(-4px) rotate(45deg); } }
 @media (prefers-reduced-motion: reduce) { .fab-voice.open .fv-ico, .fab-voice.open::after { animation: none; } .fab-voice.open::after { opacity: 1; } }
+
+/* ===== v32: админ — пользователи ===== */
+.au-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-bottom: var(--space-sm); }
+.au-stats div { display: grid; gap: 2px; padding: 10px 8px; border-radius: 14px; background: var(--color-paper-2); text-align: center; min-width: 0; }
+.au-stats b { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.au-stats span { font-size: 11px; color: var(--color-muted); line-height: 1.2; }
+.au-search { margin-bottom: var(--space-xs); }
+.au-list { list-style: none; margin: 0; padding: 0; }
+.au-row { width: 100%; display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: var(--space-sm); align-items: center; padding: 8px 4px; border: 0; background: none; text-align: left; border-radius: 14px; }
+.au-row:active { background: var(--color-paper-2); }
+.au-row .avatar { width: 44px; height: 44px; }
+.au-main, .au-side { display: grid; gap: 2px; min-width: 0; }
+.au-main b { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.au-main small, .au-side small { font-size: 12px; color: var(--color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.au-side { justify-items: end; }
+.au-side small.on { color: var(--color-ok); font-weight: 700; }
+.au-badge { margin-left: 6px; padding: 1px 6px; border-radius: 99px; background: var(--color-ink); color: var(--color-on-ink); font-size: 10px; font-weight: 700; font-style: normal; vertical-align: 2px; }
+.au-empty { padding: var(--space-md) 0; text-align: center; }

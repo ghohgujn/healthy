@@ -220,6 +220,29 @@
     }).catch(e => { $('#devAi').textContent = e.message; });
   }
   $('#devOnboard').onclick = () => { HF.closeDialog($('#devSheet')); open(true); };
+
+  /* ---------- админ: все пользователи; тап — открыть профиль целиком ---------- */
+  const ago = t => { if (!t) return 'ещё не заходил'; const m = Math.round((Date.now() - t) / 60000);
+    return m < 2 ? 'в сети' : m < 60 ? `${m} мин назад` : m < 1440 ? `${Math.round(m / 60)} ч назад` : m < 2880 ? 'вчера' : new Date(t).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }); };
+  const since = t => new Date(t).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: new Date(t).getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
+  let auT = null;
+  async function loadUsers(term = '') {
+    const list = $('#auList');
+    try {
+      const r = await S().api(`/api/admin/users?q=${encodeURIComponent(term)}`);
+      $('#auStats').innerHTML = [['Всего', r.total], ['Сегодня', r.active1], ['За неделю', r.active7], ['Новых за 7 дн.', r.newWeek]]
+        .map(([l, v]) => `<div><b>${v}</b><span>${l}</span></div>`).join('');
+      list.innerHTML = r.users.length ? r.users.map(u => `<li><button class="au-row" data-uid="${u.id}">${S().avaHTML(u)}
+        <span class="au-main"><b>${esc(u.name)}${u.admin ? '<i class="au-badge">админ</i>' : ''}</b><small>@${esc(u.username)} · с ${since(u.created)}</small></span>
+        <span class="au-side"><small class="${u.seen && Date.now() - u.seen < 120000 ? 'on' : ''}">${ago(u.seen)}</small><small>${u.posts} публ. · ${u.friends} друз.</small></span></button></li>`).join('')
+        : '<li class="sub au-empty">Никого не нашлось</li>';
+      list.querySelectorAll('[data-uid]').forEach(b => b.onclick = () => window.HFPosts?.openUser(+b.dataset.uid));
+    } catch (e) { list.innerHTML = `<li class="sub au-empty">${esc(e.message)}</li>`; }
+  }
+  function openUsers() { $('#auSearch').value = ''; $('#auList').innerHTML = '<li class="sub au-empty">Загружаю…</li>'; HF.openDialog($('#usersSheet')); loadUsers(); }
+  $('#auSearch').addEventListener('input', e => { clearTimeout(auT); auT = setTimeout(() => loadUsers(e.target.value.trim()), 250); });
+  $('#devUsers').onclick = openUsers;
+  window.HFAdmin = { open: () => { if (S()?.me?.admin) openDev(); }, users: openUsers };
   $('#devHealth').onclick = async () => {
     try { const r = await (await fetch('/healthz')).json(); HF.toast(r.key ? 'Сервер работает, ключ нейросети на месте' : 'Сервер работает, но нет ключа нейросети'); }
     catch { HF.toast('Сервер не отвечает'); }
