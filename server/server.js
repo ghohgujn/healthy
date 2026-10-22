@@ -187,7 +187,7 @@ function syncOf(u) {
   if (!u.sync) return null;
   const hit = syncCache.get(u.id); if (hit && hit.at === u.sync_at) return hit.data;
   let data = null; try { data = JSON.parse(u.sync); } catch {}
-  if (syncCache.size > 2000) syncCache.clear();
+  if (syncCache.size > 100) syncCache.clear();   // дневники с фото тяжёлые — много в памяти не держим
   syncCache.set(u.id, { at: u.sync_at, data }); return data;
 }
 const FAT_SHARE = { none: 0, light: 0.03, heavy: 0.08, included: 0 };
@@ -865,10 +865,14 @@ async function serveStatic(req, res, url) {
 /* ---------------- «Помощник по питанию» ----------------
    Раз в день вечером (20:00–23:00 по APP_TZ) пишет каждому в чат: итоги дня, «неделя пока» и один совет на завтра;
    по воскресеньям — итоги недели и путь до цели по весу. Считает по облачной копии дневника — теми же формулами, что приложение. */
-db.exec(`CREATE TABLE IF NOT EXISTS coach_log (user_id INTEGER NOT NULL, day TEXT NOT NULL, kind TEXT NOT NULL, PRIMARY KEY (user_id, day, kind))`);
-let BOT_ID = q('SELECT id FROM users WHERE username = ?').get(BOT_USERNAME)?.id;
-if (!BOT_ID) BOT_ID = Number(q('INSERT INTO users (username, name, pass, health_token, created) VALUES (?, ?, ?, ?, ?)')
-  .run(BOT_USERNAME, 'Помощник по питанию', hashPass(randomBytes(24).toString('hex')), randomBytes(18).toString('base64url'), now()).lastInsertRowid);
+// помощник не должен уметь «положить» сервер: любая ошибка при его запуске — только в лог
+let BOT_ID = 0;
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS coach_log (user_id INTEGER NOT NULL, day TEXT NOT NULL, kind TEXT NOT NULL, PRIMARY KEY (user_id, day, kind))`);
+  BOT_ID = q('SELECT id FROM users WHERE username = ?').get(BOT_USERNAME)?.id || 0;
+  if (!BOT_ID) BOT_ID = Number(q('INSERT INTO users (username, name, pass, health_token, created) VALUES (?, ?, ?, ?, ?)')
+    .run(BOT_USERNAME, 'Помощник по питанию', hashPass(randomBytes(24).toString('hex')), randomBytes(18).toString('base64url'), now()).lastInsertRowid);
+} catch (e) { console.error('coach init', e.message); }
 const clockFmt = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', hourCycle: 'h23', weekday: 'short' });
 const nf = v => Math.round(v).toLocaleString('ru-RU');
 const lit = ml => String(Math.round(ml / 100) / 10).replace('.', ',');
@@ -881,7 +885,8 @@ function dayStatsOf(data, date) {
 }
 const shiftDay = (k, n) => { const d = new Date(k + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 function coachEvening(u, date, weekly) {
-  const data = syncOf(u); if (!data?.days) return null;
+  let data = null; try { data = u.sync ? JSON.parse(u.sync) : null; } catch {}   // без кэша: не держим чужие дневники в памяти
+  if (!data?.days) return null;
   const d = dayStatsOf(data, date), lines = [];
   const week = Array.from({ length: 7 }, (_, i) => dayStatsOf(data, shiftDay(date, -i))).filter(x => x.meals);
   const inNorm = week.filter(x => Math.abs(x.kcal - x.goal) <= x.goal * 0.1).length;
@@ -918,22 +923,32 @@ function coachSay(uid, text) {
   notify(uid, { title: 'Помощник по питанию', body: text.split('\n').slice(0, 2).join(' · ').slice(0, 140), url: `/?chat=${BOT_ID}`, tag: 'coach' });
 }
 const COACH_HELLO = 'Привет! Я помощник по питанию 👋\nКаждый вечер буду присылать итоги дня: калории, белок, воду и один совет на завтра. По воскресеньям — итоги недели и сколько осталось до цели.\nЗаписывайте еду — фото, голосом или удержав камеру — и смотрите свой прогресс в «Профиль → Прогресс».';
-function coachTick() {
+let coachBusy = false;
+async function coachTick() {
+  if (!BOT_ID || coachBusy) return; coachBusy = true;
   try {
     const parts = Object.fromEntries(clockFmt.formatToParts(new Date()).map(x => [x.type, x.value]));
     const hour = +parts.hour, today = dayKey(now()), weekly = parts.weekday === 'Sun', since = now() - 30 * 864e5;
-    const users = q(`SELECT u.* FROM users u WHERE u.id != ? AND (u.sync_at > ? OR EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id AND s.created > ?))`).all(BOT_ID, since, since);
-    for (const u of users) {
-      if (!q('SELECT 1 FROM coach_log WHERE user_id = ? AND kind = ?').get(u.id, 'hello')) {
-        q('INSERT OR IGNORE INTO coach_log (user_id, day, kind) VALUES (?, ?, ?)').run(u.id, today, 'hello'); coachSay(u.id, COACH_HELLO);
-      }
-      if (hour < 20 || hour >= 23 || q('SELECT 1 FROM coach_log WHERE user_id = ? AND day = ? AND kind = ?').get(u.id, today, 'day')) continue;
-      q('INSERT OR IGNORE INTO coach_log (user_id, day, kind) VALUES (?, ?, ?)').run(u.id, today, 'day');
-      const text = coachEvening(u, today, weekly); if (text) coachSay(u.id, text);
+    const ids = q(`SELECT u.id FROM users u WHERE u.id != ? AND (u.sync_at > ? OR EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id AND s.created > ?))`).all(BOT_ID, since, since).map(r => r.id);
+    for (const id of ids) {
+      await new Promise(r => setImmediate(r));   // по одному человеку за раз: сервер продолжает отвечать остальным
+      try {
+        if (!q('SELECT 1 FROM coach_log WHERE user_id = ? AND kind = ?').get(id, 'hello')) {
+          q('INSERT OR IGNORE INTO coach_log (user_id, day, kind) VALUES (?, ?, ?)').run(id, today, 'hello'); coachSay(id, COACH_HELLO);
+        }
+        if (hour < 20 || hour >= 23 || q('SELECT 1 FROM coach_log WHERE user_id = ? AND day = ? AND kind = ?').get(id, today, 'day')) continue;
+        q('INSERT OR IGNORE INTO coach_log (user_id, day, kind) VALUES (?, ?, ?)').run(id, today, 'day');
+        const u = q('SELECT id, sync, sync_at FROM users WHERE id = ?').get(id);
+        const text = coachEvening(u, today, weekly); if (text) coachSay(id, text);
+      } catch (e) { console.error('coach user', id, e.message); }
     }
-  } catch (e) { console.error('coach', e.message); }
+  } catch (e) { console.error('coach', e.message); } finally { coachBusy = false; }
 }
 setTimeout(coachTick, Number(process.env.COACH_DELAY_MS || 20_000)); setInterval(coachTick, 10 * 60_000);
+
+// страховка: необработанная ошибка в фоне пишется в лог, а не роняет сервер в цикл перезапусков
+process.on('unhandledRejection', e => console.error('unhandledRejection', e?.stack || e));
+process.on('uncaughtException', e => console.error('uncaughtException', e?.stack || e));
 
 http.createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
