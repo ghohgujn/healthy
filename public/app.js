@@ -1149,14 +1149,19 @@
     const show = () => { open = true; goo.classList.add('open'); vb.classList.add('open'); fab.classList.add('radial-on'); vb.tabIndex = 0; vb.setAttribute('aria-hidden', 'false'); try { navigator.vibrate?.(14); } catch {} };
     const hide = () => { open = false; goo.classList.remove('open'); vb.classList.remove('open'); fab.classList.remove('radial-on'); vb.tabIndex = -1; vb.setAttribute('aria-hidden', 'true'); setHot(false); };
     const pick = () => { hide(); openVoice(); };
-    const hit = (x, y) => { const r = vb.querySelector('.fv-ico').getBoundingClientRect(); return Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2)) < 52; };
+    const hit = (x, y) => { const r = vb.querySelector('.fv-ico').getBoundingClientRect(); return r.width > 0 && Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2)) < 44; };
     fab.addEventListener('pointerdown', e => {
       if (e.button || open) return;
       document.documentElement.classList.add('no-select');   // долгое нажатие не выделяет текст на экране
       hold = { t: setTimeout(() => { hold.long = true; show(); }, 280) };
       try { fab.setPointerCapture(e.pointerId); } catch {}
     });
-    fab.addEventListener('pointermove', e => { if (hold?.long) setHot(hit(e.clientX, e.clientY)); });
+    // дотянулся пальцем до микрофона — сразу выбираем, отпускать не нужно
+    fab.addEventListener('pointermove', e => {
+      if (!hold?.long) return;
+      if (hit(e.clientX, e.clientY)) { clearTimeout(hold.t); hold = null; document.documentElement.classList.remove('no-select');
+        suppressClick = true; setTimeout(() => { suppressClick = false; }, 500); setHot(true); setTimeout(pick, 120); }
+    });
     fab.addEventListener('pointerup', e => {
       document.documentElement.classList.remove('no-select');
       if (!hold) return; clearTimeout(hold.t); const h = hold; hold = null;
