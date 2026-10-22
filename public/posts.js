@@ -51,10 +51,11 @@
   async function renderOwn() {
     const me = S().me, tabs = $('#profTabs');
     tabs.hidden = !me; $('#profHandle').hidden = !me; $('#profStats').hidden = !me;
-    if (!me) { $('#profPosts').hidden = true; $('#profParams').hidden = false; return; }
+    if (!me) { $('#profPosts').hidden = true; $('#profParams').hidden = false; $('#profProgress').hidden = false; return; }
     $('#profHandle').textContent = '@' + me.username;
     tabs.querySelectorAll('[data-ptab]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.ptab === ptab)));
-    $('#profPosts').hidden = ptab !== 'posts'; $('#profParams').hidden = ptab !== 'params';
+    $('#profPosts').hidden = ptab !== 'posts'; $('#profParams').hidden = ptab !== 'params'; $('#profProgress').hidden = ptab !== 'progress';
+    if (ptab === 'progress') HF.renderStats?.();
     try {
       const r = await api(`/api/users/${me.id}`);
       const u = r.user, streak = HF.streakInfo().count;
@@ -236,6 +237,36 @@
       if (focusComment) requestAnimationFrame(() => $('#cmtTitle')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
     } catch (e) { $('#postBody').innerHTML = `<button class="icon-btn icon-btn-float post-close" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button><p class="sub uv-err">${esc(e.message)}</p>`; }
   }
+  const fmtDur = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  // голосовой комментарий — плеер-пилюля; кружок — маленький круг, по тапу крупнее и со звуком
+  function mediaHTML(c) {
+    const d = Math.max(1, Math.round(c.dur || 0));
+    if (c.kind === 'voice') return `<div class="cmt-voice" data-voice="${c.id}"><button class="cv-play" type="button" aria-label="Воспроизвести, ${fmtDur(d)}"><svg><use href="#i-play"/></svg></button>
+      <span class="cv-wave" aria-hidden="true">${Array.from({ length: 22 }, (_, i) => `<i style="height:${25 + Math.abs(Math.sin(c.id * 5 + i * 1.9)) * 75}%"></i>`).join('')}</span><span class="cv-dur">${fmtDur(d)}</span></div>`;
+    return `<div class="cmt-circle" data-circle="${c.id}" role="button" tabindex="0" aria-label="Кружок, ${fmtDur(d)}"><video playsinline muted preload="metadata" src="${esc(c.media)}#t=0.1"></video><span class="cc-play" aria-hidden="true"><svg><use href="#i-play"/></svg></span><span class="cc-dur">${fmtDur(d)}</span></div>`;
+  }
+  function bindMedia(box) {
+    box.querySelectorAll('[data-voice]').forEach(el => {
+      const c = comments.find(x => x.id === +el.dataset.voice), btn = el.querySelector('.cv-play'), bars = [...el.querySelectorAll('.cv-wave i')], dd = el.querySelector('.cv-dur');
+      const a = new Audio(); a.preload = 'none'; a.src = c.media; const D = Math.max(1, c.dur || 0);
+      btn.onclick = e => { e.stopPropagation(); document.querySelectorAll('audio, video').forEach(x => x !== a && x.pause()); a.paused ? a.play().catch(() => HF.toast('Не удалось воспроизвести')) : a.pause(); };
+      a.onplay = () => { btn.innerHTML = '<svg><use href="#i-pause"/></svg>'; el.classList.add('playing'); };
+      a.onpause = () => { btn.innerHTML = '<svg><use href="#i-play"/></svg>'; el.classList.remove('playing'); };
+      a.onended = () => { a.onpause(); bars.forEach(b => b.classList.remove('on')); dd.textContent = fmtDur(D); };
+      a.ontimeupdate = () => { const d = isFinite(a.duration) && a.duration ? a.duration : D, k = Math.round(a.currentTime / d * bars.length); bars.forEach((b, i) => b.classList.toggle('on', i < k)); dd.textContent = fmtDur(Math.max(0, d - a.currentTime)); };
+      el.onclick = e => e.stopPropagation();
+    });
+    box.querySelectorAll('[data-circle]').forEach(el => {
+      const v = el.querySelector('video');
+      el.onclick = e => {
+        e.stopPropagation();
+        if (el.classList.contains('playing')) { v.pause(); el.classList.remove('playing'); v.muted = true; return; }
+        document.querySelectorAll('audio').forEach(x => x.pause()); document.querySelectorAll('.cmt-circle.playing').forEach(o => o !== el && o.click());
+        el.classList.add('playing'); v.muted = false; v.currentTime = 0; v.play().catch(() => el.classList.remove('playing'));
+      };
+      v.onended = () => { el.classList.remove('playing'); v.muted = true; };
+    });
+  }
   function commentHTML(c) {
     const me = S().me, own = c.author.id === me?.id;
     return `<li class="cmt${c.parent ? ' is-reply' : ''}" data-cid="${c.id}">
@@ -244,7 +275,8 @@
         <button class="cmt-ava" data-user="${c.author.id}" aria-label="Профиль: ${esc(c.author.name)}">${avaHTML(c.author)}</button>
         <div class="cmt-main" data-tap="${c.id}">
           <p class="cmt-name">${esc(c.author.name)}${c.author.id === post.author.id ? '<span class="cmt-badge">Автор</span>' : ''}</p>
-          <p class="cmt-text">${c.replyTo && c.parent ? `<span class="cmt-to">@${esc(c.replyTo.username)}</span> ` : ''}${esc(c.body)}</p>
+          ${c.kind === 'voice' || c.kind === 'video' ? `${c.replyTo && c.parent ? `<p class="cmt-text"><span class="cmt-to">@${esc(c.replyTo.username)}</span></p>` : ''}${mediaHTML(c)}`
+            : `<p class="cmt-text">${c.replyTo && c.parent ? `<span class="cmt-to">@${esc(c.replyTo.username)}</span> ` : ''}${esc(c.body)}</p>`}
           <p class="cmt-meta"><span>${ago(c.created)}</span><button class="cmt-act" data-reply="${c.id}">Ответить</button>${own || post.mine ? `<button class="cmt-act" data-cdel="${c.id}">Удалить</button>` : ''}</p>
         </div>
         <button class="cmt-like${c.liked ? ' on' : ''}" data-clike="${c.id}" aria-pressed="${c.liked}" aria-label="Нравится комментарий${c.likes ? `, ${c.likes}` : ''}">
@@ -260,7 +292,7 @@
       return commentHTML(c) + (reps.length ? `<li class="cmt-thread"><ul>${open ? reps.map(commentHTML).join('') : ''}</ul>
         ${open ? '' : `<button class="cmt-more" data-thread="${c.id}"><i></i>Показать ответы (${reps.length})</button>`}</li>` : '');
     }).join('');
-    bindComments();
+    bindComments(); bindMedia(box);
   }
   function setReply(c) {
     replyTo = c;
@@ -293,7 +325,7 @@
     box.querySelectorAll('.cmt').forEach(li => {
       const c = comments.find(x => x.id === +li.dataset.cid), row = li.querySelector('.cmt-row');
       let x0 = 0, y0 = 0, dx = 0, drag = false, moved = false;
-      li.addEventListener('pointerdown', e => { if (e.target.closest('button')) return; x0 = e.clientX; y0 = e.clientY; dx = 0; drag = true; moved = false; });
+      li.addEventListener('pointerdown', e => { if (e.target.closest('button, .cmt-voice, .cmt-circle')) return; x0 = e.clientX; y0 = e.clientY; dx = 0; drag = true; moved = false; });
       li.addEventListener('pointermove', e => {
         if (!drag) return;
         const ddx = e.clientX - x0, ddy = e.clientY - y0;
@@ -306,7 +338,7 @@
         if (li.classList.contains('armed')) { li.classList.remove('armed'); try { navigator.vibrate?.(15); } catch {} setReply(c); }
       };
       li.addEventListener('pointerup', end); li.addEventListener('pointercancel', end); li.addEventListener('pointerleave', end);
-      li.querySelector('.cmt-main').addEventListener('click', () => { if (!moved) setReply(c); });
+      li.querySelector('.cmt-main').addEventListener('click', e => { if (!moved && !e.target.closest('.cmt-voice, .cmt-circle')) setReply(c); });
     });
   }
   function paintCLike(b, c) {
@@ -320,14 +352,87 @@
   $('#commentForm').onsubmit = async e => {
     e.preventDefault(); if (!post) return;
     const inp = $('#commentInput'), body = inp.value.trim(); if (!body) return;
-    inp.value = ''; const to = replyTo;
+    inp.value = ''; inp.dispatchEvent(new Event('input')); const to = replyTo;
     try {
       const r = await api(`/api/posts/${post.id}/comments`, { method: 'POST', body: to ? { body, parent: to.id } : { body } });
       comments.push(r.comment); if (r.comment.parent) openThreads.add(r.comment.parent);
       post.comments++; setReply(null); renderComments(); syncCount();
       const el = $(`#comments [data-cid="${r.comment.id}"]`); el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); el?.classList.add('fresh');
-    } catch (err) { inp.value = body; HF.toast(err.message); }
+    } catch (err) { inp.value = body; inp.dispatchEvent(new Event('input')); HF.toast(err.message); }
   };
+
+
+  /* ---------- голосовые и кружки в комментариях ----------
+     Поле пустое — на кнопке микрофон. Тап переключает «голос ↔ кружок», удержание пишет, отпустил — отправилось,
+     увёл палец влево — отмена (как в чате). */
+  {
+    const btn = $('#cmtMain'), inp = $('#commentInput'), form = $('#commentForm');
+    const pickType = list => (window.MediaRecorder && list.find(t => MediaRecorder.isTypeSupported(t))) || '';
+    let mode = 'voice'; try { mode = localStorage.getItem('hf.cmtMode') === 'video' ? 'video' : 'voice'; } catch {}
+    let R = null, press = null;
+    const paint = () => {
+      const has = inp.value.trim().length > 0;
+      btn.innerHTML = `<svg><use href="#${has ? 'i-send' : mode === 'video' ? 'i-circle' : 'i-mic'}"/></svg>`;
+      btn.setAttribute('aria-label', has ? 'Отправить комментарий' : mode === 'video' ? 'Кружок: удерживайте, чтобы записать; тап — голосовое' : 'Голосовое: удерживайте, чтобы записать; тап — кружок');
+    };
+    inp.addEventListener('input', paint); paint();
+    const ui = on => {
+      form.classList.toggle('recording', on); form.classList.toggle('rec-video', on && R?.mode === 'video');
+      $('#cmtRec').hidden = !on; inp.hidden = on; $('#cmtCircle').hidden = !(on && R?.mode === 'video');
+      if (on) { $('#cmtRecTime').textContent = '0:00'; form.classList.remove('rec-cancel'); }
+      if (!on) paint();
+    };
+    async function start() {
+      if (!window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) { HF.toast('Запись не поддерживается в этом браузере'); return; }
+      const r = R = { mode, chunks: [], ready: false };
+      ui(true); try { navigator.vibrate?.(14); } catch {}
+      try { r.stream = await navigator.mediaDevices.getUserMedia(mode === 'voice' ? { audio: { echoCancellation: true, noiseSuppression: true } } : { audio: true, video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 480 } } }); }
+      catch { if (R === r) { R = null; ui(false); } HF.toast(mode === 'voice' ? 'Нет доступа к микрофону' : 'Нет доступа к камере'); return; }
+      if (R !== r) { r.stream.getTracks().forEach(t => t.stop()); return; }
+      if (r.mode === 'video') { const v = $('#cmtCircleVideo'); v.srcObject = r.stream; v.muted = true; v.play().catch(() => {}); }
+      const type = r.mode === 'voice' ? pickType(['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm']) : pickType(['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']);
+      r.mr = new MediaRecorder(r.stream, type ? (r.mode === 'voice' ? { mimeType: type, audioBitsPerSecond: 48000 } : { mimeType: type, videoBitsPerSecond: 900_000 }) : undefined);
+      r.mr.ondataavailable = e => e.data.size && r.chunks.push(e.data);
+      r.mr.start(250); r.t0 = Date.now(); r.ready = true;
+      const max = r.mode === 'voice' ? 120 : 60;
+      r.timer = setInterval(() => { const s = (Date.now() - r.t0) / 1000; $('#cmtRecTime').textContent = fmtDur(s); if (s >= max) finish(true); }, 200);
+    }
+    function finish(send) {
+      const r = R; if (!r) return; R = null; clearInterval(r.timer); ui(false);
+      const v = $('#cmtCircleVideo'); v.pause(); v.srcObject = null;
+      if (!r.ready) return;
+      r.mr.onstop = async () => {
+        r.stream.getTracks().forEach(t => t.stop());
+        if (!send || !post) return;
+        const dur = (Date.now() - r.t0) / 1000; if (dur < 0.8) { HF.toast('Слишком коротко — удерживайте кнопку'); return; }
+        const blob = new Blob(r.chunks, { type: (r.mr.mimeType || (r.mode === 'voice' ? 'audio/webm' : 'video/webm')).split(';')[0] });
+        const to = replyTo;
+        try {
+          const up = await api('/api/media', { method: 'POST', body: blob });
+          const res = await api(`/api/posts/${post.id}/comments`, { method: 'POST', body: { kind: r.mode, media: up.id, meta: { dur }, ...(to ? { parent: to.id } : {}) } });
+          comments.push(res.comment); if (res.comment.parent) openThreads.add(res.comment.parent);
+          post.comments++; setReply(null); renderComments(); syncCount();
+          $(`#comments [data-cid="${res.comment.id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        } catch (e) { HF.toast(e.message); }
+      };
+      try { r.mr.stop(); } catch { r.stream.getTracks().forEach(t => t.stop()); }
+    }
+    btn.addEventListener('pointerdown', e => {
+      if (inp.value.trim()) return;
+      e.preventDefault(); try { btn.setPointerCapture(e.pointerId); } catch {}
+      press = { x: e.clientX, timer: setTimeout(() => { if (press) { press.held = true; start(); } }, 220) };
+    });
+    btn.addEventListener('pointermove', e => { if (!press?.held || !R) return; const c = e.clientX - press.x < -80; R.cancel = c; form.classList.toggle('rec-cancel', c); });
+    btn.addEventListener('pointerup', () => {
+      if (!press) return; clearTimeout(press.timer); const p = press; press = null;
+      if (!p.held) { mode = mode === 'voice' ? 'video' : 'voice'; try { localStorage.setItem('hf.cmtMode', mode); } catch {} paint(); HF.toast(mode === 'video' ? 'Кружок: удерживайте кнопку' : 'Голосовое: удерживайте кнопку'); return; }
+      finish(!R?.cancel);
+    });
+    btn.addEventListener('pointercancel', () => { if (press) { clearTimeout(press.timer); if (press.held) finish(false); press = null; } });
+    btn.addEventListener('contextmenu', e => e.preventDefault());
+    btn.addEventListener('click', e => { if (!inp.value.trim()) e.preventDefault(); });
+    new MutationObserver(() => { if ($('#postSheet').hidden && R) finish(false); }).observe($('#postSheet'), { attributes: true, attributeFilter: ['hidden'] });
+  }
 
   /* ---------- хуки ---------- */
   const prevOnTab = S().onTab;

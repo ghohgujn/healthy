@@ -5,11 +5,13 @@ window.HFMockApi = (() => {
     const t = Date.now(), users = [
       { id: 2, username: 'masha.demo', name: 'Маша (демо)', avatar: '', bio: '', stats: { streak: 12 }, flame: { count: 12, state: 'active' } },
       { id: 3, username: 'artem.demo', name: 'Артём (демо)', avatar: '', bio: '', stats: { streak: 4 }, flame: { count: 4, state: 'out', canRestore: true } },
-      { id: 4, username: 'katya.demo', name: 'Катя (демо)', avatar: '', bio: '', stats: {}, flame: { count: 0, state: 'none' } } ];
+      { id: 4, username: 'katya.demo', name: 'Катя (демо)', avatar: '', bio: '', stats: {}, flame: { count: 0, state: 'none' } },
+      { id: 9, username: 'hf_coach', name: 'Помощник по питанию', avatar: '', bio: '', stats: {}, bot: true, flame: { count: 0, state: 'none' } } ];
     const st = { me: null, fr: { 2: 'friends', 3: 'friends', 4: 'incoming' }, id: 10,
       msgs: [ { id: 1, from: 2, to: 1, kind: 'text', body: 'Привет! Как питание сегодня?', created: t - 36e5 },
         { id: 2, from: 2, to: 1, kind: 'meal', body: 'мой обед', media: '', meta: { title: 'Плов с салатом', kcal: 640, p: 28, f: 24, c: 76 }, created: t - 30e5 },
         { id: 3, from: 3, to: 1, kind: 'text', body: 'Завтра на площадку в 8?', created: t - 9e5 },
+        { id: 8, from: 9, to: 1, kind: 'text', body: 'Итоги дня 🌙\nСъедено 1 840 из 2 100 ккал — в норме ✅\nБелок 92 из 120 г · вода 1,5 из 2,2 л\nНеделя пока: 4 из 6 дней в норме, в среднем 1 950 ккал.\nСовет на завтра: добавьте ~28 г белка — творог, яйца, курица или рыба.', created: t - 2e5 },
         { id: 4, from: 2, to: 1, kind: 'voice', body: '', media: '', meta: { dur: 14 }, created: t - 29e5 },
         { id: 5, from: 2, to: 1, kind: 'video', body: '', media: '', meta: { dur: 9 }, created: t - 28e5 },
         { id: 6, from: 1, to: 2, kind: 'text', body: 'Выглядит супер! Сколько белка вышло?', created: t - 27e5 },
@@ -86,7 +88,7 @@ window.HFMockApi = (() => {
       const friendOk = uid => uid === 1 || st.fr[uid] === 'friends';
       const vis = x => x.vis === 'public' || friendOk(x.user_id);
       const shapeC = c => { const to = c.reply_to ? who(c.reply_to) : null;
-        return { id: c.id, body: c.body, created: c.created, parent: c.parent, replyTo: to && { id: to.id, name: to.name, username: to.username }, author: who(c.user_id), likes: c.likesBase + c.likers.size, liked: c.likers.has(1) }; };
+        return { id: c.id, body: c.body || '', kind: c.kind || 'text', media: c.media || '', dur: c.dur || 0, created: c.created, parent: c.parent, replyTo: to && { id: to.id, name: to.name, username: to.username }, author: who(c.user_id), likes: c.likesBase + c.likers.size, liked: c.likers.has(1) }; };
       const um = /^\/api\/users\/(\d+)$/.exec(p);
       if (um) { const id = +um[1], x = who(id), visible = friendOk(id);
         const posts = st.posts.filter(q => q.user_id === id && (visible || q.vis === 'public')).sort((a, b) => b.created - a.created).map(shapeP);
@@ -101,7 +103,7 @@ window.HFMockApi = (() => {
         if (pm[2] === '/like') { M === 'POST' ? x.likers.add(1) : x.likers.delete(1); const s2 = shapeP(x); return { likes: s2.likes, liked: s2.liked }; }
         if (pm[2] === '/comments') { let parent = null, reply_to = null;
           if (body.parent) { const pc = st.comments.find(c => c.id === +body.parent); parent = pc.parent || pc.id; reply_to = pc.user_id; }
-          const c = { id: ++st.id, post_id: x.id, user_id: 1, body: body.body, created: Date.now(), parent, reply_to, likers: new Set(), likesBase: 0 }; st.comments.push(c); return { comment: shapeC(c) }; } }
+          const c = { id: ++st.id, post_id: x.id, user_id: 1, body: body.body, kind: body.kind, media: body.media ? st.media[body.media] : '', dur: body.meta?.dur || 0, created: Date.now(), parent, reply_to, likers: new Set(), likesBase: 0 }; st.comments.push(c); return { comment: shapeC(c) }; } }
       const clm = /^\/api\/comments\/(\d+)\/like$/.exec(p);
       if (clm) { const c = st.comments.find(x => x.id === +clm[1]); M === 'POST' ? c.likers.add(1) : c.likers.delete(1); const s2 = shapeC(c); return { likes: s2.likes, liked: s2.liked }; }
       const dcm = /^\/api\/comments\/(\d+)$/.exec(p);

@@ -36,12 +36,15 @@
   }
   // фото (data:URL) → сервер JSON-ом: работает одинаково во всех браузерах
   const uploadImage = dataUrl => api('/api/media', { method: 'POST', body: { data: dataUrl } });
+  const BOT_AVA = '<svg aria-hidden="true"><use href="#i-spark"/></svg>';
   const ava = (el, u) => {
+    el.classList.toggle('bot-ava', !!u?.bot);
+    if (u?.bot) { el.style.backgroundImage = ''; el.innerHTML = BOT_AVA; return el; }
     if (u?.avatar) { el.style.backgroundImage = `url("${u.avatar}")`; el.textContent = ''; }
     else { el.style.backgroundImage = ''; el.textContent = (u?.name || '?').trim().charAt(0).toUpperCase(); }
     return el;
   };
-  const avaHTML = (u, cls = '') => u?.avatar ? `<span class="avatar ${cls}" style="background-image:url('${esc(u.avatar)}')"></span>` : `<span class="avatar ${cls}">${esc((u?.name || '?').charAt(0).toUpperCase())}</span>`;
+  const avaHTML = (u, cls = '') => u?.bot ? `<span class="avatar bot-ava ${cls}">${BOT_AVA}</span>` : u?.avatar ? `<span class="avatar ${cls}" style="background-image:url('${esc(u.avatar)}')"></span>` : `<span class="avatar ${cls}">${esc((u?.name || '?').charAt(0).toUpperCase())}</span>`;
   const flameBadge = f => !f || f.state === 'none' ? '' :
     `<i class="flame-b ${f.state}" title="${f.state === 'out' ? 'Огонёк погас' : f.state === 'risk' ? 'Напишите друг другу сегодня' : 'Огонёк дружбы'}"><svg><use href="#i-flame"/></svg>${f.count}</i>`;
   const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 12 || h > 14) ? b : c; };
@@ -361,7 +364,7 @@
     const list = $('#chatList'); list.innerHTML = '';
     if (!chats.length) list.innerHTML = `<li class="sub chat-empty">Пока нет сообщений. Сфотографируйте еду и нажмите «Поделиться» — или откройте друга сверху.</li>`;
     for (const c of chats) {
-      const li = document.createElement('li'), b = document.createElement('button'); b.className = 'chat-row' + (c.unread ? ' unread' : '');
+      const li = document.createElement('li'), b = document.createElement('button'); b.className = 'chat-row' + (c.unread ? ' unread' : '') + (c.peer.bot ? ' is-bot' : '');
       b.innerHTML = `${avaHTML(c.peer)}<span class="cr-main"><b>${esc(c.peer.name)} ${flameBadge(c.peer.flame)}</b><small>${c.last.from === me.id ? 'Вы: ' : ''}${esc(preview(c.last))}</small></span>
         <span class="cr-side"><small>${timeAgo(c.last.created)}</small>${c.unread ? `<i class="dot">${c.unread}</i>` : ''}</span>`;
       b.onclick = () => openChat(c.peer);
@@ -402,7 +405,8 @@
   let peer = null, lastId = 0, chatPoll = null, peerRead = 0;
   async function openChat(u) {
     peer = u; lastId = 0; peerRead = 0; setReplyMsg(null);
-    ava($('#chatAva'), u); $('#chatName').textContent = u.name; $('#chatSub').textContent = '@' + u.username; $('#flameBanner').hidden = true;
+    ava($('#chatAva'), u); $('#chatName').textContent = u.name; $('#chatSub').textContent = u.bot ? 'Итоги дня каждый вечер · советы' : '@' + u.username; $('#flameBanner').hidden = true;
+    chatEl.classList.toggle('is-bot', !!u.bot);
     $('#msgs').innerHTML = ''; delete $('#msgs').dataset.day; $('#msgInput').value = ''; updateSendBtn();
     HF.openDialog(chatEl, '#chatBack');   // без автофокуса: сначала читаем переписку, клавиатура — по нажатию на поле
     await loadMsgs();
@@ -419,7 +423,7 @@
       const sc = $('#chatScroll'), atBottom = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80;
       for (const m of r.messages) { appendMsg(m); lastId = Math.max(lastId, m.id); }
       if (r.peerRead !== peerRead) { peerRead = r.peerRead; markRead(); }
-      if (!r.friends) $('#chatSub').textContent = 'Вы больше не друзья — писать нельзя'; else renderFlame(r.peer?.flame);
+      if (peer.bot) {} else if (!r.friends) $('#chatSub').textContent = 'Вы больше не друзья — писать нельзя'; else renderFlame(r.peer?.flame);
       if (r.messages.length && (atBottom || lastId === r.messages[r.messages.length - 1].id)) sc.scrollTop = sc.scrollHeight;
     } catch {}
   }
@@ -956,7 +960,7 @@
   window.HFInstall = { open: openInstall, maybe: maybeOfferInstall, can: canOfferInstall };
 
   /* ================= hooks ================= */
-  $('#chatAva').onclick = $('#chatName').onclick = () => { if (peer) window.HFPosts?.openUser(peer.id); };
+  $('#chatAva').onclick = $('#chatName').onclick = () => { if (peer && !peer.bot) window.HFPosts?.openUser(peer.id); };
   window.HFSocial = {
     onTab(name) { tab = name; if (name === 'chats') { renderAuth(); if (me) { renderInbox(); refreshSocial(); } } if (name === 'profile') { renderAccountCard(); renderHealthCard(); renderPushUI(); } if (name === 'activity') renderHealthCard(); },
     onSave, shareMeal, checkName, api, avaHTML, esc, flameBadge, openChat, plural, refreshSocial,

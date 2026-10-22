@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS health (user_id INTEGER NOT NULL, date TEXT NOT NULL,
 const stmts = new Map();
 const q = sql => { let st = stmts.get(sql); if (!st) { st = db.prepare(sql); stmts.set(sql, st); } return st; };
 // миграции: добавляем колонки, если их ещё нет
-for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER'], ['users', 'share_summary', 'INTEGER NOT NULL DEFAULT 1'], ['posts', 'gallery', 'TEXT']])
+for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER'], ['users', 'share_summary', 'INTEGER NOT NULL DEFAULT 1'], ['posts', 'gallery', 'TEXT'], ['comments', 'kind', "TEXT NOT NULL DEFAULT 'text'"], ['comments', 'media', 'TEXT'], ['comments', 'meta', 'TEXT']])
   if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${def}`);
 db.exec(`CREATE TABLE IF NOT EXISTS comment_likes (comment_id INTEGER NOT NULL, user_id INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (comment_id, user_id));
 CREATE INDEX IF NOT EXISTS posts_vis ON posts (vis, id);
@@ -120,7 +120,8 @@ function startSession(res, userId) {
   res.setHeader('Set-Cookie', `hf=${t}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${SECURE ? '; Secure' : ''}`);
 }
 const withFlame = (me, u) => u && ({ ...pub(u), flame: flame(me, u.id) });
-const pub = u => u && { id: u.id, username: u.username, name: u.name, avatar: u.avatar ? `/media/${u.avatar}` : '', bio: u.bio || '', stats: JSON.parse(u.stats || '{}') };
+const BOT_USERNAME = 'hf_coach';   // «Помощник по питанию»: пишет каждому раз в день, сам сообщения не принимает
+const pub = u => u && { id: u.id, username: u.username, name: u.name, avatar: u.avatar ? `/media/${u.avatar}` : '', bio: u.bio || '', stats: JSON.parse(u.stats || '{}'), ...(u.username === BOT_USERNAME ? { bot: true } : {}) };
 const friendState = (me, other) => {
   const f = q('SELECT * FROM friends WHERE a = ? AND b = ?').get(Math.min(me, other), Math.max(me, other));
   if (!f) return 'none';
@@ -228,7 +229,8 @@ function visiblePost(id, me) {
 }
 const shapeComment = (c, me) => {
   const to = c.reply_to ? q('SELECT id, name, username FROM users WHERE id = ?').get(c.reply_to) : null;
-  return { id: c.id, body: c.body, created: c.created, parent: c.parent_id || null, replyTo: to ? { id: to.id, name: to.name, username: to.username } : null,
+  return { id: c.id, body: c.body, kind: c.kind || 'text', media: c.media ? `/media/${c.media}` : '', dur: c.meta ? num(JSON.parse(c.meta).dur) : 0,
+    created: c.created, parent: c.parent_id || null, replyTo: to ? { id: to.id, name: to.name, username: to.username } : null,
     author: pub(q('SELECT * FROM users WHERE id = ?').get(c.user_id)),
     likes: q('SELECT COUNT(*) n FROM comment_likes WHERE comment_id = ?').get(c.id).n,
     liked: Boolean(me && q('SELECT 1 FROM comment_likes WHERE comment_id = ? AND user_id = ?').get(c.id, me)) };
@@ -390,7 +392,8 @@ async function serveMedia(req, res, id) {
   const isAvatar = q('SELECT 1 FROM users WHERE avatar = ?').get(id);
   const allowed = isAvatar || isAdmin(me) || (me && (m.owner === me.id ||
     q('SELECT 1 FROM messages WHERE media = ? AND (sender = ? OR recipient = ?)').get(id, me.id, me.id) ||
-    q('SELECT user_id, vis FROM posts WHERE media = ? OR gallery LIKE ?').all(id, `%"${id}"%`).some(p => canSeePost(me.id, p))));
+    q('SELECT user_id, vis FROM posts WHERE media = ? OR gallery LIKE ?').all(id, `%"${id}"%`).some(p => canSeePost(me.id, p)) ||
+    q('SELECT p.user_id, p.vis FROM comments c JOIN posts p ON p.id = c.post_id WHERE c.media = ?').all(id).some(p => canSeePost(me.id, p))));
   if (!allowed) { res.writeHead(403); return res.end(); }
   const range = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
   // имена файлов случайные и никогда не меняются — браузер может хранить их «навсегда»
@@ -469,7 +472,7 @@ async function api(req, res, url) {
     if (!USERNAME.test(username)) throw fail(400, 'Логин: 3–20 символов, латиница, цифры, точка или _');
     if (!name) throw fail(400, 'Укажите имя');
     if (pass.length < 6) throw fail(400, 'Пароль — минимум 6 символов');
-    if (q('SELECT 1 FROM users WHERE username = ?').get(username)) throw fail(409, 'Такой логин уже занят');
+    if (username === BOT_USERNAME || q('SELECT 1 FROM users WHERE username = ?').get(username)) throw fail(409, 'Такой логин уже занят');
     const r = q('INSERT INTO users (username, name, pass, health_token, created) VALUES (?, ?, ?, ?, ?)')
       .run(username, name, hashPass(pass), randomBytes(18).toString('base64url'), now());
     startSession(res, Number(r.lastInsertRowid));
@@ -657,7 +660,12 @@ async function api(req, res, url) {
       rate('comment:' + me.id, 120, 3_600_000);
       const b = await json(req, 8_000);
       const body = String(b.body || '').trim().slice(0, 500);
-      if (!body) throw fail(400, 'Пустой комментарий');
+      // голосовое или кружок: файл уже загружен через /api/media и принадлежит автору комментария
+      const kind = b.kind === 'voice' || b.kind === 'video' ? b.kind : 'text';
+      const cm = kind !== 'text' && q('SELECT * FROM media WHERE id = ? AND owner = ?').get(String(b.media || ''), me.id);
+      if (kind !== 'text' && (!cm || !cm.type.startsWith(kind === 'voice' ? 'audio/' : 'video/') && !(kind === 'voice' && cm.type === 'video/webm'))) throw fail(400, 'Нет записи');
+      if (kind === 'text' && !body) throw fail(400, 'Пустой комментарий');
+      const cmeta = kind !== 'text' ? JSON.stringify({ dur: Math.max(0, Math.min(600, num(b.meta?.dur))) }) : null;
       // ответ: храним корневой комментарий (одна ветка, как в TikTok) и кому отвечаем
       let parent = null, replyTo = null;
       if (b.parent) {
@@ -665,9 +673,10 @@ async function api(req, res, url) {
         if (!pc) throw fail(404, 'Комментарий не найден');
         parent = pc.parent_id || pc.id; replyTo = pc.user_id;
       }
-      const r = q('INSERT INTO comments (post_id, user_id, body, created, parent_id, reply_to) VALUES (?, ?, ?, ?, ?, ?)').run(post.id, me.id, body, now(), parent, replyTo);
-      if (replyTo && replyTo !== me.id) notify(replyTo, { title: `${me.name} ответил(а) вам`, body: body.slice(0, 120), url: `/?post=${post.id}`, tag: `post-${post.id}` });
-      if (post.user_id !== me.id && post.user_id !== replyTo) notify(post.user_id, { title: `${me.name} прокомментировал(а)`, body: body.slice(0, 120), url: `/?post=${post.id}`, tag: `post-${post.id}` });
+      const r = q('INSERT INTO comments (post_id, user_id, body, created, parent_id, reply_to, kind, media, meta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(post.id, me.id, body, now(), parent, replyTo, kind, cm ? cm.id : null, cmeta);
+      const ptxt = kind === 'voice' ? '🎤 Голосовой комментарий' : kind === 'video' ? '📹 Кружок' : body.slice(0, 120);
+      if (replyTo && replyTo !== me.id) notify(replyTo, { title: `${me.name} ответил(а) вам`, body: ptxt, url: `/?post=${post.id}`, tag: `post-${post.id}` });
+      if (post.user_id !== me.id && post.user_id !== replyTo) notify(post.user_id, { title: `${me.name} прокомментировал(а)`, body: ptxt, url: `/?post=${post.id}`, tag: `post-${post.id}` });
       return send(res, 200, { comment: shapeComment(q('SELECT * FROM comments WHERE id = ?').get(r.lastInsertRowid), me.id) });
     }
   }
@@ -693,8 +702,8 @@ async function api(req, res, url) {
     rate('search:' + me.id, 60, 60_000);
     const term = String(url.searchParams.get('q') || '').trim().replace(/[%_]/g, '').slice(0, 30);
     if (term.length < 2) return send(res, 200, { users: [] });
-    const rows = q(`SELECT * FROM users WHERE id != ? AND (username LIKE ? OR name LIKE ?) ORDER BY username = ? DESC, username LIMIT 20`)
-      .all(me.id, term + '%', '%' + term + '%', term);
+    const rows = q(`SELECT * FROM users WHERE id != ? AND username != ? AND (username LIKE ? OR name LIKE ?) ORDER BY username = ? DESC, username LIMIT 20`)
+      .all(me.id, BOT_USERNAME, term + '%', '%' + term + '%', term);
     return send(res, 200, { users: rows.map(u => ({ ...pub(u), state: friendState(me.id, u.id) })) });
   }
   if (p === '/api/friends' && M === 'GET') {
@@ -851,6 +860,80 @@ async function serveStatic(req, res, url) {
   res.writeHead(200, { ...headers, 'Content-Length': f.buf.length });
   res.end(req.method === 'HEAD' ? undefined : f.buf);
 }
+
+
+/* ---------------- «Помощник по питанию» ----------------
+   Раз в день вечером (20:00–23:00 по APP_TZ) пишет каждому в чат: итоги дня, «неделя пока» и один совет на завтра;
+   по воскресеньям — итоги недели и путь до цели по весу. Считает по облачной копии дневника — теми же формулами, что приложение. */
+db.exec(`CREATE TABLE IF NOT EXISTS coach_log (user_id INTEGER NOT NULL, day TEXT NOT NULL, kind TEXT NOT NULL, PRIMARY KEY (user_id, day, kind))`);
+let BOT_ID = q('SELECT id FROM users WHERE username = ?').get(BOT_USERNAME)?.id;
+if (!BOT_ID) BOT_ID = Number(q('INSERT INTO users (username, name, pass, health_token, created) VALUES (?, ?, ?, ?, ?)')
+  .run(BOT_USERNAME, 'Помощник по питанию', hashPass(randomBytes(24).toString('hex')), randomBytes(18).toString('base64url'), now()).lastInsertRowid);
+const clockFmt = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', hourCycle: 'h23', weekday: 'short' });
+const nf = v => Math.round(v).toLocaleString('ru-RU');
+const lit = ml => String(Math.round(ml / 100) / 10).replace('.', ',');
+function dayStatsOf(data, date) {
+  const day = data.days?.[date] || {}, s = data.settings || {}, prof = data.profile || {}, t = { kcal: 0, p: 0 };
+  for (const m of day.meals || []) for (const it of m.items || []) { const x = itemTotals(it); t.kcal += x.kcal * (1); t.p += x.p; }
+  const h = (data.health || {})[date] || {};
+  let bonus = 0; try { bonus = HFCalc.dayBonus({ ...prof, weight: +prof.weight || 75 }, day.acts || [], day.steps || h.steps || 0, h.active_kcal || 0).kcal; } catch {}
+  return { meals: (day.meals || []).length, kcal: t.kcal, p: t.p, goal: (+s.goal || 2000) + bonus, pGoal: +s.p || 120, water: +day.water || 0, waterGoal: +s.waterGoal || 2000 };
+}
+const shiftDay = (k, n) => { const d = new Date(k + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+function coachEvening(u, date, weekly) {
+  const data = syncOf(u); if (!data?.days) return null;
+  const d = dayStatsOf(data, date), lines = [];
+  const week = Array.from({ length: 7 }, (_, i) => dayStatsOf(data, shiftDay(date, -i))).filter(x => x.meals);
+  const inNorm = week.filter(x => Math.abs(x.kcal - x.goal) <= x.goal * 0.1).length;
+  if (!d.meals) {
+    if (!week.length) return null;   // давно не пользуется — не надоедаем
+    lines.push('Сегодня в дневнике пусто 🙂', 'Запишите хотя бы ужин — даже примерно. Без пропусков видно настоящий прогресс, а серия не сгорит в полночь.');
+  } else {
+    const diff = d.kcal - d.goal, ok = Math.abs(diff) <= d.goal * 0.1;
+    lines.push('Итоги дня 🌙', `Съедено ${nf(d.kcal)} из ${nf(d.goal)} ккал — ${ok ? 'в норме ✅' : diff > 0 ? `перебор ${nf(diff)} ккал` : `недобор ${nf(-diff)} ккал`}`,
+      `Белок ${nf(d.p)} из ${nf(d.pGoal)} г · вода ${lit(d.water)} из ${lit(d.waterGoal)} л`);
+    if (week.length > 1) lines.push(`Неделя пока: ${inNorm} из ${week.length} дней в норме, в среднем ${nf(week.reduce((a, x) => a + x.kcal, 0) / week.length)} ккал.`);
+    const tip = d.p < d.pGoal * 0.85 ? `Совет на завтра: добавьте ~${nf(d.pGoal - d.p)} г белка — творог, яйца, курица или рыба.`
+      : diff > d.goal * 0.1 ? 'Совет на завтра: чуть меньше гарнира и перекусов — и день попадёт в норму.'
+      : diff < -d.goal * 0.25 ? 'Совет на завтра: не урезайте слишком сильно — большой недобор тормозит прогресс и срывает режим.'
+      : d.water < d.waterGoal * 0.7 ? 'Совет на завтра: держите бутылку воды на виду — до нормы не хватило.'
+      : 'Отличный день — повторите завтра 💪';
+    lines.push(tip);
+  }
+  if (weekly && week.length >= 3) {
+    const w = (data.weights || []).filter(x => x.date > shiftDay(date, -8)), prof = data.profile || {};
+    const last = (data.weights || []).at?.(-1)?.kg ?? (data.weights || [])[(data.weights || []).length - 1]?.kg;
+    lines.push('', `Итоги недели: ${inNorm} из 7 дней в норме калорий.`);
+    if (w.length >= 2) { const dk = Math.round((w[w.length - 1].kg - w[0].kg) * 10) / 10; lines.push(`Вес за неделю: ${dk > 0 ? '+' : dk < 0 ? '−' : ''}${String(Math.abs(dk)).replace('.', ',')} кг.`); }
+    const start = (data.weights || [])[0]?.kg, tgt = +prof.target;
+    if (tgt && start && last && Math.abs(start - tgt) > 0.2) {
+      const pct = Math.max(0, Math.min(100, Math.round((start - last) / (start - tgt) * 100))), left = Math.round(Math.abs(last - tgt) * 10) / 10;
+      lines.push(`До цели ${String(left).replace('.', ',')} кг — пройдено ${pct}% пути.`);
+    } else if (!(data.weights || []).length) lines.push('Запишите вес в «Профиль → Прогресс» — покажу, как вы движетесь к цели.');
+  }
+  return lines.join('\n');
+}
+function coachSay(uid, text) {
+  q('INSERT INTO messages (sender, recipient, kind, body, media, meta, created, reply_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(BOT_ID, uid, 'text', text, null, null, now(), null);
+  notify(uid, { title: 'Помощник по питанию', body: text.split('\n').slice(0, 2).join(' · ').slice(0, 140), url: `/?chat=${BOT_ID}`, tag: 'coach' });
+}
+const COACH_HELLO = 'Привет! Я помощник по питанию 👋\nКаждый вечер буду присылать итоги дня: калории, белок, воду и один совет на завтра. По воскресеньям — итоги недели и сколько осталось до цели.\nЗаписывайте еду — фото, голосом или удержав камеру — и смотрите свой прогресс в «Профиль → Прогресс».';
+function coachTick() {
+  try {
+    const parts = Object.fromEntries(clockFmt.formatToParts(new Date()).map(x => [x.type, x.value]));
+    const hour = +parts.hour, today = dayKey(now()), weekly = parts.weekday === 'Sun', since = now() - 30 * 864e5;
+    const users = q(`SELECT u.* FROM users u WHERE u.id != ? AND (u.sync_at > ? OR EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id AND s.created > ?))`).all(BOT_ID, since, since);
+    for (const u of users) {
+      if (!q('SELECT 1 FROM coach_log WHERE user_id = ? AND kind = ?').get(u.id, 'hello')) {
+        q('INSERT OR IGNORE INTO coach_log (user_id, day, kind) VALUES (?, ?, ?)').run(u.id, today, 'hello'); coachSay(u.id, COACH_HELLO);
+      }
+      if (hour < 20 || hour >= 23 || q('SELECT 1 FROM coach_log WHERE user_id = ? AND day = ? AND kind = ?').get(u.id, today, 'day')) continue;
+      q('INSERT OR IGNORE INTO coach_log (user_id, day, kind) VALUES (?, ?, ?)').run(u.id, today, 'day');
+      const text = coachEvening(u, today, weekly); if (text) coachSay(u.id, text);
+    }
+  } catch (e) { console.error('coach', e.message); }
+}
+setTimeout(coachTick, Number(process.env.COACH_DELAY_MS || 20_000)); setInterval(coachTick, 10 * 60_000);
 
 http.createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');

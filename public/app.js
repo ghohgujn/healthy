@@ -844,7 +844,7 @@
       b.onclick = () => { p.activity = k; applyProfile(); };
       al.appendChild(b);
     }
-    renderPlan(); renderWeight(); renderWeekBars();
+    renderPlan(); renderStats();
   }
   function renderPlan() {
     const p = db.profile, t = HFCalc.targets(p), kc = t.p * 4 + t.f * 9 + t.c * 4;
@@ -916,11 +916,96 @@
     db.weights.sort((a, b) => a.date.localeCompare(b.date));
     if (announce) { db.profile.weight = kg; applyProfile(); toast(`Записано: ${kg} кг`); }
   }
+  const lastKg = () => db.weights.length ? db.weights[db.weights.length - 1].kg : +db.profile.weight || 0;
+  // поле веса заранее заполнено последним значением: обычно нужно лишь чуть поправить кнопками ±0,1
+  const wIn = () => $('#weighInput');
+  const bumpW = d => { const v = (+String(wIn().value).replace(',', '.') || lastKg() || 70) + d; wIn().value = (Math.round(v * 10) / 10).toFixed(1); };
+  $('#weighMinus').onclick = () => bumpW(-0.1); $('#weighPlus').onclick = () => bumpW(0.1);
   $('#weighBtn').onclick = () => {
-    const v = +String($('#weighInput').value).replace(',', '.');
-    if (!(v >= 30 && v <= 300)) { toast('Введите вес от 30 до 300 кг'); return; }
-    logWeight(Math.round(v * 10) / 10); $('#weighInput').value = '';
+    const v = +String(wIn().value).replace(',', '.');
+    if (!(v >= 30 && v <= 300)) { toast('Введите вес от 30 до 300 кг'); wIn().focus(); return; }
+    logWeight(Math.round(v * 10) / 10); save(); renderStats();
   };
+
+  /* ---------- прогресс: аналитика за 7 / 30 дней ----------
+     Метрики, которые реально показывают движение к цели:
+     • дни в норме калорий (±10% от цели с учётом активности) — главный показатель дисциплины;
+     • среднее ккал в день против цели и накопленный баланс → расчётное изменение веса (7700 ккал ≈ 1 кг);
+     • белок в % от нормы — сохраняет мышцы при похудении; вода в % от нормы;
+     • дни с записями и серия — регулярность; тренировки и активные ккал;
+     • вес: тренд, изменение за период и путь до цели. */
+  let statDays = 7;
+  function periodStats(n) {
+    const now = new Date(), s = db.settings, rows = [];
+    for (let i = n - 1; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i), k = keyOf(d), dd = db.days[k];
+      const logged = (dd?.meals?.length || 0) > 0, t = dd ? dayTotals(k) : { kcal: 0, p: 0, f: 0, c: 0 }, goal = s.goal + actKcal(k);
+      rows.push({ k, d, logged, kcal: t.kcal, p: t.p, goal, water: dd?.water || 0, acts: dd?.acts?.length || 0, act: actKcal(k), today: i === 0 });
+    }
+    // сегодняшний день ещё не закончился — в средние и «в норме» берём только завершённые дни с записями (плюс сегодня, если он уже набран)
+    const done = rows.filter(r => r.logged && (!r.today || r.kcal >= r.goal * 0.7));
+    const avg = (arr, f) => arr.length ? arr.reduce((a, r) => a + f(r), 0) / arr.length : 0;
+    const inNorm = done.filter(r => Math.abs(r.kcal - r.goal) <= r.goal * 0.1).length;
+    const balance = done.reduce((a, r) => a + (r.kcal - r.goal), 0);
+    const pGoal = s.p || 1, wGoal = s.waterGoal || 2000;
+    const w = HFCalc.weightTrend(db.weights.slice(-120)), from = keyOf(rows[0].d);
+    const wIn = w.filter(x => x.date >= from), wFirst = wIn[0] || null, wLast = w[w.length - 1] || null;
+    return {
+      n, rows, logged: rows.filter(r => r.logged).length, done: done.length, inNorm,
+      avgKcal: Math.round(avg(done, r => r.kcal)), avgGoal: Math.round(avg(done.length ? done : rows, r => r.goal)),
+      protein: Math.round(avg(done, r => r.p) / pGoal * 100), water: Math.round(avg(rows.filter(r => !r.today || r.water), r => Math.min(1.5, r.water / wGoal)) * 100),
+      workouts: rows.reduce((a, r) => a + r.acts, 0), actKcal: Math.round(rows.reduce((a, r) => a + r.act, 0)),
+      balance: Math.round(balance), estKg: Math.round(balance / 7700 * 10) / 10,
+      wNow: wLast?.trend ?? null, wDelta: wFirst && wLast && wIn.length > 1 ? Math.round((wLast.trend - wFirst.trend) * 10) / 10 : null,
+      streak: streakInfo().count,
+    };
+  }
+  const sgn = v => (v > 0 ? '+' : v < 0 ? '−' : '') + String(Math.abs(v)).replace('.', ',');
+  function statInsight(st) {
+    const goal = db.profile.goal || '', lose = goal.startsWith('lose'), gain = goal.startsWith('gain');
+    if (!st.logged) return { tone: 'idle', title: 'Начните с одного приёма пищи', text: 'Сфотографируйте или наговорите, что съели, — и здесь появится ваш прогресс.' };
+    const parts = [], norm = st.done ? st.inNorm / st.done : 0;
+    let tone = norm >= 0.7 ? 'good' : norm >= 0.4 ? 'mid' : 'low';
+    const title = norm >= 0.7 ? 'Отличный темп — так держать' : norm >= 0.4 ? 'Хорошо идёте, есть куда расти' : 'Пора вернуться в ритм';
+    if (st.done) parts.push(`${st.inNorm} из ${st.done} ${plural(st.done, 'дня', 'дней', 'дней')} в норме калорий`);
+    if (st.balance && st.done >= 2) parts.push(`по расчёту ${st.estKg ? `${sgn(st.estKg)} кг` : 'вес на месте'}${lose && st.balance < 0 ? ' — в сторону цели' : gain && st.balance > 0 ? ' — в сторону цели' : ''}`);
+    if (st.wDelta !== null) parts.push(`по весам ${sgn(st.wDelta)} кг`);
+    if (st.protein && st.protein < 80) parts.push(`белка не хватает — в среднем ${st.protein}% нормы`);
+    if (st.logged < st.n * 0.6) parts.push(`записаны ${st.logged} из ${st.n} дней — пропуски сбивают картину`);
+    return { tone, title, text: parts.join(' · ') + '.' };
+  }
+  function renderStats() {
+    if (!$('#stGrid')) return;
+    const st = periodStats(statDays), ins = statInsight(st), p = db.profile;
+    document.querySelectorAll('#stPeriod [data-days]').forEach(b => b.setAttribute('aria-checked', String(+b.dataset.days === statDays)));
+    $('#stInsight').className = `st-insight tone-${ins.tone}`;
+    $('#stInsight').innerHTML = `<b></b><p></p>`; $('#stInsight b').textContent = ins.title; $('#stInsight p').textContent = ins.text;
+    // вес
+    const kg = lastKg(); if (document.activeElement !== wIn() && !wIn().value && kg) wIn().value = (+kg).toFixed(1);
+    const todayW = db.weights.find(w => w.date === today());
+    $('#wNow').textContent = st.wNow ? `Тренд ${String(st.wNow).replace('.', ',')} кг${st.wDelta !== null ? ` · ${sgn(st.wDelta)} кг за ${statDays} дн.` : ''}` : 'Записывайте утром натощак, 2–3 раза в неделю';
+    $('#weighBtn').textContent = todayW ? `Обновить вес за сегодня · ${String(todayW.kg).replace('.', ',')} кг` : 'Записать вес за сегодня';
+    const start = db.weights[0]?.kg, tgt = +p.target;
+    if (tgt && start && kg && Math.abs(start - tgt) > 0.2) {
+      const pct = Math.max(0, Math.min(1, (start - kg) / (start - tgt)));
+      $('#wGoal').hidden = false;
+      $('#wGoal').innerHTML = `<div class="wg-track"><i style="width:${Math.round(pct * 100)}%"></i></div><p><span>Старт ${String(start).replace('.', ',')}</span><b>${Math.round(pct * 100)}% пути</b><span>Цель ${String(tgt).replace('.', ',')}</span></p>`;
+    } else $('#wGoal').hidden = true;
+    // плитки
+    const tile = (cls, label, val, sub, k) => `<div class="st-tile ${cls}"><p class="st-lbl">${label}</p><p class="st-val">${val}</p>${k != null ? `<div class="st-meter"><i style="width:${Math.max(0, Math.min(100, k))}%"></i></div>` : ''}<p class="st-sub">${sub}</p></div>`;
+    const dl = st.avgKcal - st.avgGoal;
+    $('#stGrid').innerHTML = [
+      tile('t-norm', 'В норме калорий', `${st.inNorm}<small>/${st.done || 0}</small>`, 'дней ±10% от цели', st.done ? st.inNorm / st.done * 100 : 0),
+      tile('t-kcal', 'Среднее в день', `${st.avgKcal || '—'}<small> ккал</small>`, st.done ? `${dl > 0 ? '+' : dl < 0 ? '−' : ''}${Math.abs(dl)} к цели ${st.avgGoal}` : 'нет полных дней', null),
+      tile('t-bal', 'Баланс', `${st.balance > 0 ? '+' : st.balance < 0 ? '−' : ''}${Math.abs(st.balance).toLocaleString('ru-RU')}<small> ккал</small>`, st.done >= 2 ? `≈ ${sgn(st.estKg)} кг по расчёту` : 'нужно 2+ дня', null),
+      tile('t-prot', 'Белок', `${st.protein || 0}<small>%</small>`, `от нормы ${db.settings.p} г`, st.protein),
+      tile('t-days', 'Регулярность', `${st.logged}<small>/${st.n}</small>`, `дней с записями · серия ${st.streak}`, st.logged / st.n * 100),
+      tile('t-water', 'Вода', `${st.water || 0}<small>%</small>`, 'в среднем от нормы', st.water),
+      tile('t-act', 'Активность', `${st.workouts}<small> ${plural(st.workouts, 'трен.', 'трен.', 'трен.')}</small>`, `${st.actKcal} активных ккал`, null),
+    ].join('');
+    renderWeight(); renderWeekBars();
+  }
+  document.querySelectorAll('#stPeriod [data-days]').forEach(b => b.onclick = () => { statDays = +b.dataset.days; renderStats(); });
   function renderWeight() {
     const box = $('#wChart'), pts = HFCalc.weightTrend(db.weights.slice(-60));
     if (pts.length < 2) { box.innerHTML = `<p class="wchart-empty">Записывайте вес утром натощак 2–3 раза в неделю — покажем тренд без скачков воды.</p>`; return; }
@@ -934,8 +1019,7 @@
     const area = line + ` L${x(pts[pts.length - 1].date).toFixed(1)} ${H - pb} L${x(pts[0].date).toFixed(1)} ${H - pb} Z`;
     const f = d => new Date(d + 'T12:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
     const last = pts[pts.length - 1], first = pts[0], diff = Math.round((last.trend - first.trend) * 10) / 10;
-    box.innerHTML = `<p class="sub">Тренд: <b>${last.trend} кг</b> · ${diff > 0 ? '+' : ''}${diff} кг с ${f(first.date)}</p>
-      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="График веса: тренд ${last.trend} кг">
+    box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="График веса: тренд ${last.trend} кг">
       ${ticks.map(v => `<line class="w-grid" x1="${pl}" x2="${W - pr}" y1="${y(v)}" y2="${y(v)}"/><text class="w-lbl" x="${pl - 6}" y="${y(v) + 3}" text-anchor="end">${v}</text>`).join('')}
       ${db.profile.target && db.profile.target >= lo && db.profile.target <= hi ? `<line class="w-goal" x1="${pl}" x2="${W - pr}" y1="${y(db.profile.target)}" y2="${y(db.profile.target)}"/>` : ''}
       <path class="w-area" d="${area}" opacity="0.7"/>
@@ -945,16 +1029,18 @@
       </svg>`;
   }
   function renderWeekBars() {
-    const now = new Date(), box = $('#weekBars'), wd = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+    const now = new Date(), box = $('#weekBars'), wd = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'], n = statDays;
     const rows = [];
-    for (let i = 6; i >= 0; i--) {
+    for (let i = n - 1; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i), k = keyOf(d);
       const goal = db.settings.goal + actKcal(k);
-      rows.push({ k, wd: wd[d.getDay()], eaten: db.days[k] ? dayTotals(k).kcal : 0, goal });
+      rows.push({ k, i, lbl: n <= 7 ? wd[d.getDay()] : (i % 5 === 0 ? String(d.getDate()) : ''), eaten: db.days[k] ? dayTotals(k).kcal : 0, goal });
     }
     const max = Math.max(...rows.map(r => Math.max(r.eaten, r.goal))) * 1.1 || 1;
-    box.innerHTML = rows.map(r => `<div class="bar" title="${Math.round(r.eaten)} из ${r.goal} ккал"><div class="bar-col"><i class="${r.eaten > r.goal * 1.05 ? 'over' : ''}" style="height:${r.eaten / max * 100}%"></i><b style="bottom:${r.goal / max * 100}%"></b></div><span>${r.wd}</span></div>`).join('');
-    box.setAttribute('aria-label', 'Калории за неделю: ' + rows.map(r => `${r.wd} ${Math.round(r.eaten)}`).join(', '));
+    $('#barsTitle').textContent = n <= 7 ? 'Калории за неделю' : 'Калории за 30 дней';
+    box.classList.toggle('dense', n > 7);
+    box.innerHTML = rows.map(r => `<div class="bar" title="${Math.round(r.eaten)} из ${r.goal} ккал"><div class="bar-col"><i class="${r.eaten > r.goal * 1.1 ? 'over' : r.eaten && Math.abs(r.eaten - r.goal) <= r.goal * 0.1 ? 'ok' : ''}" style="height:${r.eaten / max * 100}%"></i><b style="bottom:${r.goal / max * 100}%"></b></div><span>${r.lbl}</span></div>`).join('');
+    box.setAttribute('aria-label', `Калории за ${n} дней: ` + rows.filter(r => r.eaten).map(r => `${r.k.slice(5)} ${Math.round(r.eaten)}`).join(', '));
   }
 
   $('#shareMeal').onclick = async () => {
@@ -1116,26 +1202,31 @@
   const TAB_ORDER = ['today', 'activity', 'feed', 'chats', 'profile'];
   {
     const hint = document.createElement('div'); hint.className = 'edge-back'; hint.innerHTML = '<svg><use href="#i-back"/></svg>'; document.body.appendChild(hint);
-    const SKIP = 'input, textarea, select, [contenteditable], .friend-row, .share-row, .chips, .refine-chips, .composer, .cam, .stepper, .rec-bar, .fab, .fab-voice, [data-noswipe]';
-    const hScroll = el => { for (; el && el !== document.body; el = el.parentElement) if (el.scrollWidth > el.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return true; return false; };
+    const SKIP = 'input, textarea, select, [contenteditable], .composer, .comment-form, .cam, .stepper, .rec-bar, .fab, .fab-voice, [data-noswipe]';
+    // ближайшая лента, которая сама листается вбок (друзья, карусель, подсказки); пока ей есть куда листать — жест её
+    const hScroller = el => { for (; el && el !== document.body; el = el.parentElement) if (el.scrollWidth > el.clientWidth + 8 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return el; return null; };
+    const canScrollX = (sc, dx) => dx < 0 ? sc.scrollLeft + sc.clientWidth < sc.scrollWidth - 2 : sc.scrollLeft > 2;
     const tabEl = n => $('#tab-' + n);
     let g = null;
     const reset = () => { hint.style.cssText = ''; hint.classList.remove('on'); };
     addEventListener('touchstart', e => {
       g = null; if (e.touches.length > 1) return;
       const t = e.touches[0], tg = e.target;
-      if (!standaloneApp && (t.clientX < 24 || t.clientX > innerWidth - 24)) return;
-      if (tg.closest?.(SKIP) || hScroll(tg)) return;
+      if (!standaloneApp && t.clientX < 18) return;   // левый край — системный «назад» Safari
+      if (tg.closest?.(SKIP)) return;
       if (document.querySelector('#onb:not([hidden]), .fab-goo.open')) return;
+      for (let i = stack.length - 1; i >= 0; i--) if (stack[i].el.hidden) stack.splice(i, 1);   // «зависшие» закрытые окна не должны блокировать листание
       const top = stack[stack.length - 1]?.el;
-      if (top) g = { mode: 'back', x: t.clientX, y: t.clientY, t: performance.now(), dx: 0, lock: 0, el: top.matches('.chat, .uview') ? top : null };
-      else g = { mode: 'tabs', x: t.clientX, y: t.clientY, t: performance.now(), dx: 0, lock: 0, el: tabEl(tab), i: TAB_ORDER.indexOf(tab) };
+      const sc = hScroller(tg);
+      if (top) g = { mode: 'back', sc, x: t.clientX, y: t.clientY, t: performance.now(), dx: 0, lock: 0, el: top.matches('.chat, .uview') ? top : null };
+      else g = { mode: 'tabs', sc, x: t.clientX, y: t.clientY, t: performance.now(), dx: 0, lock: 0, el: tabEl(tab), i: TAB_ORDER.indexOf(tab) };
     }, { passive: true });
     addEventListener('touchmove', e => {
       if (!g) return; const t = e.touches[0], dx = t.clientX - g.x, dy = t.clientY - g.y;
       if (!g.lock) {
-        if (Math.abs(dx) < 12 && Math.abs(dy) < 12) return;
-        if (Math.abs(dy) > Math.abs(dx) * 0.8 || (g.mode === 'back' && dx <= 0)) { g = null; return; }   // вертикально (прокрутка) — не наше
+        if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+        if (Math.abs(dy) >= Math.abs(dx) || (g.mode === 'back' && dx <= 0)) { g = null; return; }   // вертикально (прокрутка) — не наше
+        if (g.sc && canScrollX(g.sc, dx)) { g = null; return; }   // лента под пальцем ещё листается — пусть листается она
         g.lock = 1; if (g.el) g.el.style.transition = 'none';
       }
       if (e.cancelable) e.preventDefault();
@@ -1153,7 +1244,7 @@
     const end = () => {
       if (!g) return; const { mode, el, dx, lock, i } = g, v = Math.abs(dx) / Math.max(1, performance.now() - g.t); g = null; reset();
       if (!lock) return;
-      const go = Math.abs(dx) > 80 || (v > 0.45 && Math.abs(dx) > 36);
+      const go = Math.abs(dx) > 64 || (v > 0.35 && Math.abs(dx) > 30);
       if (mode === 'tabs') {
         const next = go ? TAB_ORDER[i + (dx < 0 ? 1 : -1)] : null;
         if (!el) { if (next) showTab(next); return; }
@@ -1253,7 +1344,7 @@
   // фокус в поле внутри окна — iOS любит прокрутить саму страницу; возвращаем её на место
   document.addEventListener('focusin', e => { if (e.target.closest?.('.chat, .sheet-wrap, .uview')) setTimeout(() => { if (scrollY && stack.length) scrollTo(0, 0); syncViewport(); }, 60); });
 
-  window.HF = { goBack, closeOverlays, get draft() { return draft; }, mealTitle: () => $('#mealName').textContent, setInert, get db() { return db; }, set db(v) { db = v; }, validDb, mergeDb, save, day, mealTotals, openDialog, closeDialog, toast, render, streakInfo, keyOf, today, showTab, loadImage, paintAvatar, actKcal };
+  window.HF = { goBack, closeOverlays, renderStats, get draft() { return draft; }, mealTitle: () => $('#mealName').textContent, setInert, get db() { return db; }, set db(v) { db = v; }, validDb, mergeDb, save, day, mealTotals, openDialog, closeDialog, toast, render, streakInfo, keyOf, today, showTab, loadImage, paintAvatar, actKcal };
 
   /* ---------- day rollover ---------- */
   function rollDay() {

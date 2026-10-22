@@ -206,9 +206,27 @@
 
       <div class="seg prof-tabs" id="profTabs" role="radiogroup" aria-label="Разделы профиля" hidden>
         <button role="radio" data-ptab="posts" aria-checked="true">Публикации</button>
+        <button role="radio" data-ptab="progress" aria-checked="false">Прогресс</button>
         <button role="radio" data-ptab="params" aria-checked="false">Параметры</button>
       </div>
       <div id="profPosts" class="prof-posts" hidden></div>
+      <div id="profProgress" class="prof-progress" hidden>
+        <div class="seg st-period" id="stPeriod" role="radiogroup" aria-label="Период"><button role="radio" data-days="7" aria-checked="true">7 дней</button><button role="radio" data-days="30" aria-checked="false">30 дней</button></div>
+        <div class="st-insight" id="stInsight"></div>
+        <div class="card prof-card st-weight">
+          <div class="row-between"><div><h2 class="h2">Вес</h2><p class="sub" id="wNow"></p></div>
+            <div class="weigh"><button class="round-btn" id="weighMinus" aria-label="Меньше на 0,1 кг"><svg><use href="#i-minus"/></svg></button><input class="input" id="weighInput" type="number" inputmode="decimal" step="0.1" min="30" max="300" placeholder="кг" aria-label="Вес сегодня"><button class="round-btn" id="weighPlus" aria-label="Больше на 0,1 кг"><svg><use href="#i-plus"/></svg></button></div></div>
+          <div class="w-goalbar" id="wGoal" hidden></div>
+          <button class="btn btn-primary st-weigh-btn" id="weighBtn">Записать вес за сегодня</button>
+          <div class="wchart" id="wChart"></div>
+        </div>
+        <div class="st-grid" id="stGrid"></div>
+        <div class="card prof-card">
+          <div class="row-between"><h2 class="h2" id="barsTitle">Калории по дням</h2><span class="sub st-legend"><i></i>норма</span></div>
+          <div class="bars" id="weekBars"></div>
+        </div>
+      </div>
+
       <div id="profParams">
       <div class="streak-card" id="streakCard"></div>
 
@@ -233,15 +251,6 @@
 
       <div class="card prof-card plan" id="planCard"></div>
 
-      <div class="card prof-card">
-        <div class="row-between"><h2 class="h2">Вес</h2><div class="weigh"><input class="input" id="weighInput" type="number" inputmode="decimal" step="0.1" min="30" max="300" placeholder="кг" aria-label="Вес сегодня"><button class="btn btn-primary btn-sm" id="weighBtn">Записать</button></div></div>
-        <div class="wchart" id="wChart"></div>
-      </div>
-
-      <div class="card prof-card">
-        <h2 class="h2">Неделя</h2>
-        <div class="bars" id="weekBars"></div>
-      </div>
 
       <div class="card prof-card" id="accountCard"></div>
       <div class="card prof-card" id="healthCard"></div>
@@ -446,6 +455,7 @@
       <div class="mr-body"><b id="msgReplyName"></b><span id="msgReplyText"></span></div>
       <button class="icon-btn" id="msgReplyX" aria-label="Отменить ответ"><svg><use href="#i-x"/></svg></button>
     </div>
+    <p class="bot-note" id="botNote">Помощник пишет сам: каждый вечер — итоги дня и совет, по воскресеньям — итоги недели. Отвечать не нужно 🙂</p>
     <div class="composer" id="composer">
       <button class="cmp-btn" id="recTrash" aria-label="Отменить запись" hidden><svg><use href="#i-trash"/></svg></button>
       <input class="cmp-input" id="msgInput" placeholder="Сообщение" maxlength="2000" autocomplete="off" enterkeyhint="send" aria-label="Сообщение">
@@ -522,8 +532,10 @@
       <div class="sheet-body post-body" id="postBody"></div>
       <div class="reply-chip" id="replyChip" hidden><svg aria-hidden="true"><use href="#i-reply"/></svg><span id="replyChipText"></span><button type="button" class="icon-btn" id="replyCancel" aria-label="Отменить ответ"><svg><use href="#i-x"/></svg></button></div>
       <form class="comment-form" id="commentForm">
+        <div class="cmt-circle-rec" id="cmtCircle" hidden aria-hidden="true"><video id="cmtCircleVideo" playsinline muted autoplay></video></div>
         <input class="cmp-input" id="commentInput" maxlength="500" placeholder="Комментарий…" autocomplete="off" enterkeyhint="send" aria-label="Комментарий">
-        <button class="cmp-btn cmp-main" type="submit" aria-label="Отправить комментарий"><svg><use href="#i-send"/></svg></button>
+        <div class="cmt-rec" id="cmtRec" hidden role="status"><span class="rec-dot" aria-hidden="true"></span><b id="cmtRecTime">0:00</b><span class="cmt-rec-hint"><svg aria-hidden="true"><use href="#i-back"/></svg>влево — отмена</span></div>
+        <button class="cmp-btn cmp-main" id="cmtMain" type="submit" aria-label="Отправить комментарий"><svg><use href="#i-send"/></svg></button>
       </form>
     </section>
   </div>
