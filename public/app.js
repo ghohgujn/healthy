@@ -925,7 +925,7 @@
   const standaloneApp = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
   {
     const hint = document.createElement('div'); hint.className = 'edge-back'; hint.innerHTML = '<svg><use href="#i-back"/></svg>'; document.body.appendChild(hint);
-    const SKIP = 'input, textarea, select, [contenteditable], video, audio, .friend-row, .share-row, .chips, .composer, .cam, .stepper, .rec-bar, [data-noswipe]';
+    const SKIP = 'input, textarea, select, [contenteditable], .friend-row, .share-row, .chips, .composer, .cam, .stepper, .rec-bar, [data-noswipe]';
     const hScroll = el => { for (; el && el !== document.body; el = el.parentElement) if (el.scrollWidth > el.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return true; return false; };
     let g = null;
     const reset = () => { hint.style.cssText = ''; hint.classList.remove('on'); };

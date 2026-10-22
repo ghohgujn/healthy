@@ -40,6 +40,13 @@
   --color-streak-2: oklch(85% 0.09 60);
   --color-streak-bg: oklch(97% 0.03 70);
   --color-cam-ink:  oklch(99% 0 0);
+  /* чат */
+  --color-chat-bg:   oklch(96.4% 0.006 95);
+  --color-bub-mine:  oklch(92% 0.055 152);
+  --color-bub-mine-ink: oklch(24% 0.03 155);
+  --color-bub-theirs: oklch(100% 0 0);
+  --color-bub-meta:  oklch(48% 0.02 155);
+  --color-tick-read: oklch(52% 0.15 152);
 
   --font-display: "Onest", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-body:    "Onest", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -94,6 +101,18 @@
     --color-water-2:  oklch(30% 0.04 225);
     --color-act-bg:   oklch(32% 0.06 150);
     --color-act-ink:  oklch(84% 0.12 150);
+  --color-chat-bg:   oklch(14% 0.008 260);
+  --color-bub-mine:  oklch(38% 0.075 156);
+  --color-bub-mine-ink: oklch(97% 0.01 150);
+  --color-bub-theirs: oklch(23% 0.01 260);
+  --color-bub-meta:  oklch(84% 0.04 150);
+  --color-tick-read: oklch(86% 0.14 150);
+    --color-chat-bg:   oklch(14% 0.008 260);
+    --color-bub-mine:  oklch(38% 0.075 156);
+    --color-bub-mine-ink: oklch(97% 0.01 150);
+    --color-bub-theirs: oklch(23% 0.01 260);
+    --color-bub-meta:  oklch(84% 0.04 150);
+    --color-tick-read: oklch(86% 0.14 150);
     --color-streak-2: oklch(45% 0.1 50);
     --color-streak-bg: oklch(25% 0.04 50);
     --shadow-card:  0 1px 0 oklch(100% 0 0 / 0.04);

@@ -30,6 +30,7 @@
     <symbol id="i-reply" viewBox="0 0 24 24"><path d="M9.5 7 4 12l5.5 5M4.5 12H14a6 6 0 0 1 6 6v1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-ios-share" viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4M7 10H5.5A1.5 1.5 0 0 0 4 11.5v8A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5v-8A1.5 1.5 0 0 0 18.5 10H17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-add-square" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path class="lk-shackle" d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-dots-h" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></symbol>
     <symbol id="i-dots-v" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="19" r="1.8" fill="currentColor"/></symbol>
     <symbol id="i-drop" viewBox="0 0 24 24"><path d="M12 3.5c-3 4-6 7.2-6 10.6A6 6 0 0 0 18 14.1C18 10.7 15 7.5 12 3.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
@@ -387,8 +388,9 @@
     <div class="composer" id="composer">
       <button class="cmp-btn" id="recTrash" aria-label="Отменить запись" hidden><svg><use href="#i-trash"/></svg></button>
       <input class="cmp-input" id="msgInput" placeholder="Сообщение" maxlength="2000" autocomplete="off" enterkeyhint="send" aria-label="Сообщение">
-      <div class="rec-status" id="recStatus" hidden role="status"><span class="rec-dot" aria-hidden="true"></span><span class="rec-time" id="recTime">0:00</span><span class="rec-hint" id="recHint">‹ влево — отмена</span><span class="rec-lock" aria-hidden="true"><svg><use href="#i-chev"/></svg></span></div>
+      <div class="rec-status" id="recStatus" hidden role="status"><span class="rec-dot" aria-hidden="true"></span><span class="rec-time" id="recTime">0:00</span><span class="rec-hint" id="recHint"><svg aria-hidden="true"><use href="#i-back"/></svg>Влево — отмена</span><button class="rec-cancel-btn" id="recCancel" type="button">Отмена</button></div>
       <button class="cmp-btn cmp-main" id="sendBtn" aria-label="Записать голосовое"><svg><use href="#i-mic"/></svg></button>
+      <div class="rec-lockpill" id="recLock" aria-hidden="true"><svg class="lk-ico" viewBox="0 0 24 24"><path class="lk-shackle" d="M8 11V8a4 4 0 0 1 8 0v3"/><rect x="5" y="11" width="14" height="10" rx="2.5"/></svg><svg class="lk-chev"><use href="#i-chev"/></svg></div>
     </div>
   </div>
 

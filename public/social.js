@@ -403,7 +403,7 @@
   async function openChat(u) {
     peer = u; lastId = 0; peerRead = 0; setReplyMsg(null);
     ava($('#chatAva'), u); $('#chatName').textContent = u.name; $('#chatSub').textContent = '@' + u.username; $('#flameBanner').hidden = true;
-    $('#msgs').innerHTML = ''; $('#msgInput').value = ''; updateSendBtn();
+    $('#msgs').innerHTML = ''; delete $('#msgs').dataset.day; $('#msgInput').value = ''; updateSendBtn();
     HF.openDialog(chatEl, '#chatBack');   // без автофокуса: сначала читаем переписку, клавиатура — по нажатию на поле
     await loadMsgs();
     clearInterval(chatPoll); chatPoll = setInterval(() => { if (!document.hidden) loadMsgs(); }, 3000);
@@ -447,12 +447,38 @@
     } else ban.hidden = true;
   }
   function markRead() { document.querySelectorAll('.msg.mine').forEach(el => el.classList.toggle('seen', +el.dataset.id <= peerRead)); }
+  // время + галочки: одна — доставлено, две зелёные — прочитано (как в Telegram)
+  const TICKS = '<svg class="tick" viewBox="0 0 20 12" aria-hidden="true"><path class="t1" d="M1.5 6.5 5 10l7-8"/><path class="t2" d="M8.6 9.4 9.2 10l7-8"/></svg>';
+  const metaHTML = (t, mine) => `<span class="meta"><time>${t}</time>${mine ? TICKS : ''}</span>`;
+  const dayKeyOf = ts => { const d = new Date(ts); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; };
+  function dayLabel(ts) {
+    const d = new Date(ts), n = new Date(), y = new Date(n.getFullYear(), n.getMonth(), n.getDate() - 1);
+    if (dayKeyOf(d) === dayKeyOf(n)) return 'Сегодня';
+    if (dayKeyOf(d) === dayKeyOf(y)) return 'Вчера';
+    return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', ...(d.getFullYear() !== n.getFullYear() ? { year: 'numeric' } : {}) });
+  }
+  const fmtDur = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  // кружки: в ленте крутятся без звука, по тапу — со звуком и крупнее, с кольцом прогресса
+  const circleIO = 'IntersectionObserver' in window ? new IntersectionObserver(es => es.forEach(e => {
+    const v = e.target; if (v.closest('.circle-msg.playing')) return;
+    if (e.isIntersecting) { v.muted = true; v.loop = true; v.play().catch(() => {}); } else v.pause();
+  }), { threshold: 0.6 }) : null;
   function appendMsg(m) {
     if (document.querySelector(`.msg[data-id="${m.id}"]`)) return;
-    const li = document.createElement('li'), mine = m.from === me.id;
-    li.className = `msg ${mine ? 'mine' : 'theirs'} k-${m.kind}`; li.dataset.id = m.id;
+    const list = $('#msgs'), li = document.createElement('li'), mine = m.from === me.id;
+    // разделитель дня
+    const dk = dayKeyOf(m.created);
+    if (list.dataset.day !== dk) { list.dataset.day = dk; const sep = document.createElement('li'); sep.className = 'day-sep'; sep.innerHTML = `<span>${dayLabel(m.created)}</span>`; list.appendChild(sep); }
+    // группировка подряд идущих сообщений одного человека: хвостик и аватарный отступ — только у последнего
+    const prev = list.lastElementChild;
+    if (prev?.classList.contains('msg') && prev.classList.contains(mine ? 'mine' : 'theirs') && m.created - +prev.dataset.at < 5 * 60e3) { li.classList.add('cont'); prev.classList.add('has-next'); }
+    li.classList.add('msg', mine ? 'mine' : 'theirs', `k-${m.kind}`); li.dataset.id = m.id; li.dataset.at = m.created;
     const t = new Date(m.created).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-    if (m.kind === 'text') li.innerHTML = `<div class="bubble"><p></p><time>${t}</time></div>`, li.querySelector('p').textContent = m.body;
+    if (m.kind === 'text') {
+      li.innerHTML = `<div class="bubble"><p></p>${metaHTML(t, mine)}</div>`;
+      const pEl = li.querySelector('p'); pEl.textContent = m.body; pEl.insertAdjacentHTML('beforeend', '<span class="meta-sp" aria-hidden="true"></span>');
+      if (/^\p{Extended_Pictographic}{1,3}$/u.test(m.body.trim())) li.classList.add('emoji-only');
+    }
     else if (m.kind === 'meal' || m.kind === 'post') {
       // карточка вложения на своей «бумаге», подпись — отдельной строкой в цвете пузыря, как в Telegram
       const x = m.meta || {}, isPost = m.kind === 'post';
@@ -463,25 +489,43 @@
           <div class="att-info"><b class="att-title"></b>
             <p class="att-kcal"><b>${Math.round(x.kcal || 0)}</b> ккал<span style="--c:var(--color-protein)">Б ${Math.round(x.p || 0)}</span><span style="--c:var(--color-fat)">Ж ${Math.round(x.f || 0)}</span><span style="--c:var(--color-carb)">У ${Math.round(x.c || 0)}</span></p></div>
         </div>
-        ${m.body ? '<p class="cap"></p>' : ''}<time>${t}</time></div>`;
-      li.querySelector('.att-title').textContent = x.title || 'Еда'; if (m.body) li.querySelector('.cap').textContent = m.body;
+        ${m.body ? '<p class="cap"></p>' : ''}${metaHTML(t, mine)}</div>`;
+      li.querySelector('.att-title').textContent = x.title || 'Еда';
+      if (m.body) { const c = li.querySelector('.cap'); c.textContent = m.body; c.insertAdjacentHTML('beforeend', '<span class="meta-sp" aria-hidden="true"></span>'); }
+      else li.querySelector('.media-bubble').classList.add('no-cap');
       if (isPost && x.postId) { const att = li.querySelector('.att'); att.setAttribute('aria-label', `Открыть публикацию «${x.title || ''}»`);
         att.onclick = () => window.HFPosts?.openPost(x.postId); att.onkeydown = e => { if (e.key === 'Enter') att.click(); }; }
     } else if (m.kind === 'voice') {
-      const dur = Math.round(m.meta?.dur || 0);
-      li.innerHTML = `<div class="bubble voice"><button class="vplay" aria-label="Воспроизвести"><svg><use href="#i-play"/></svg></button>
-        <span class="wave" aria-hidden="true">${Array.from({ length: 22 }, (_, i) => `<i style="height:${30 + Math.abs(Math.sin(m.id * 7 + i * 1.7)) * 70}%"></i>`).join('')}</span>
-        <span class="vdur">${Math.floor(dur / 60)}:${String(dur % 60).padStart(2, '0')}</span><time>${t}</time></div>`;
-      const btn = li.querySelector('.vplay'), audio = new Audio(); audio.preload = 'none'; audio.src = m.media;
+      const dur = Math.max(1, Math.round(m.meta?.dur || 0)), N = 28;
+      li.innerHTML = `<div class="bubble voice"><button class="vplay" aria-label="Воспроизвести голосовое, ${fmtDur(dur)}"><svg><use href="#i-play"/></svg></button>
+        <div class="vbody"><span class="wave" role="slider" aria-label="Перемотка" aria-valuemin="0" aria-valuemax="${dur}" aria-valuenow="0" tabindex="-1">${Array.from({ length: N }, (_, i) => `<i style="height:${22 + Math.abs(Math.sin(m.id * 7 + i * 1.7)) * 78}%"></i>`).join('')}</span>
+        <span class="vfoot"><span class="vdur">${fmtDur(dur)}</span>${metaHTML(t, mine)}</span></div></div>`;
+      const btn = li.querySelector('.vplay'), wave = li.querySelector('.wave'), bars = [...wave.children], vd = li.querySelector('.vdur'), audio = new Audio(); audio.preload = 'none'; audio.src = m.media;
+      const paint = p => { const k = Math.round(p * N); bars.forEach((b, i) => b.classList.toggle('on', i < k)); wave.setAttribute('aria-valuenow', Math.round(p * dur)); };
       btn.onclick = () => { document.querySelectorAll('audio, video').forEach(a => a !== audio && a.pause()); audio.paused ? audio.play().catch(() => HF.toast('Не удалось воспроизвести')) : audio.pause(); };
+      wave.onclick = e => { const r = wave.getBoundingClientRect(), p = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); const go = () => { audio.currentTime = p * (audio.duration || dur); paint(p); };
+        if (audio.readyState) go(); else { audio.addEventListener('loadedmetadata', go, { once: true }); audio.load(); } if (audio.paused) btn.click(); };
       audio.onplay = () => { btn.innerHTML = '<svg><use href="#i-pause"/></svg>'; li.classList.add('playing'); };
-      audio.onpause = audio.onended = () => { btn.innerHTML = '<svg><use href="#i-play"/></svg>'; li.classList.remove('playing'); };
-      audio.ontimeupdate = () => { const p = audio.duration ? audio.currentTime / audio.duration : 0; li.style.setProperty('--p', p); };
+      audio.onpause = () => { btn.innerHTML = '<svg><use href="#i-play"/></svg>'; li.classList.remove('playing'); };
+      audio.onended = () => { audio.onpause(); paint(0); vd.textContent = fmtDur(dur); };
+      audio.ontimeupdate = () => { const d = audio.duration && isFinite(audio.duration) ? audio.duration : dur; paint(audio.currentTime / d); vd.textContent = fmtDur(Math.max(0, d - audio.currentTime)); };
     } else if (m.kind === 'video') {
-      li.innerHTML = `<div class="circle-msg"><video playsinline preload="metadata" src="${esc(m.media)}#t=0.1"></video><span class="cm-play"><svg><use href="#i-play"/></svg></span><time>${t}</time></div>`;
-      const v = li.querySelector('video'), wrap = li.querySelector('.circle-msg');
-      wrap.onclick = () => { document.querySelectorAll('audio, video').forEach(a => a !== v && a.pause()); v.paused ? (v.muted = false, v.play()) : v.pause(); };
-      v.onplay = () => wrap.classList.add('playing'); v.onpause = v.onended = () => wrap.classList.remove('playing');
+      const dur = Math.max(1, Math.round(m.meta?.dur || 0)), C = 2 * Math.PI * 48;
+      li.innerHTML = `<div class="circle-msg" role="button" tabindex="0" aria-label="Видеосообщение, ${fmtDur(dur)}"><video playsinline muted preload="metadata" src="${esc(m.media)}#t=0.1"></video>
+        <svg class="cm-ring" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="48" style="stroke-dasharray:${C};stroke-dashoffset:${C}"/></svg>
+        <span class="cm-dur">${fmtDur(dur)}</span>${metaHTML(t, mine)}</div>`;
+      const v = li.querySelector('video'), wrap = li.querySelector('.circle-msg'), ring = li.querySelector('.cm-ring circle'), cd = li.querySelector('.cm-dur');
+      circleIO?.observe(v);
+      const stop = () => { wrap.classList.remove('playing'); v.muted = true; v.loop = true; ring.style.strokeDashoffset = C; cd.textContent = fmtDur(dur); };
+      wrap.onclick = () => {
+        if (wrap.classList.contains('playing')) { if (v.paused) v.play(); else { v.pause(); stop(); v.play().catch(() => {}); } return; }
+        document.querySelectorAll('audio').forEach(a => a.pause());
+        document.querySelectorAll('.circle-msg.playing').forEach(o => o !== wrap && o.click());
+        wrap.classList.add('playing'); v.loop = false; v.muted = false; v.currentTime = 0; v.play().catch(() => stop());
+      };
+      wrap.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); wrap.click(); } };
+      v.ontimeupdate = () => { if (!wrap.classList.contains('playing')) return; const d = v.duration && isFinite(v.duration) ? v.duration : dur; ring.style.strokeDashoffset = C * (1 - v.currentTime / d); cd.textContent = fmtDur(Math.max(0, d - v.currentTime)); };
+      v.onended = () => { stop(); v.play().catch(() => {}); };
     }
     if (m.reply) {
       const q = document.createElement('button'); q.className = 'quote'; q.type = 'button';
@@ -582,11 +626,17 @@
     if (R?.locked) { recFinish(true); return; }
     press = { x, y, t: Date.now(), timer: setTimeout(() => { press.held = true; recStart(); }, 220) };
   }
+  // как в Telegram: тянешь вверх — над кнопкой «замок» едет навстречу пальцу и защёлкивается; влево — отмена
+  const LOCK_DY = 90, CANCEL_DX = 110;
   function pressMove(x, y) {
     if (!press?.held || !R || R.locked) return;
-    const dx = x - press.x, dy = y - press.y;
-    R.cancelArmed = dx < -90; $('#chat').classList.toggle('rec-cancel', R.cancelArmed);
-    if (dy < -70 && !R.cancelArmed) lockRec();
+    const dx = Math.min(0, x - press.x), dy = Math.min(0, y - press.y), c = $('#chat');
+    const up = Math.abs(dy) > Math.abs(dx);   // жесты не смешиваем: ведём либо вверх, либо влево
+    const lk = up ? Math.min(1, -dy / LOCK_DY) : 0, cx = up ? 0 : dx;
+    c.style.setProperty('--lk', lk.toFixed(3)); c.style.setProperty('--cx', `${Math.max(-CANCEL_DX, cx)}px`); c.style.setProperty('--cxk', Math.min(1, -cx / CANCEL_DX).toFixed(3));
+    sendBtn.style.transform = `translate(${Math.max(-CANCEL_DX, cx) * 0.5}px, ${Math.max(-LOCK_DY, up ? dy : 0) * 0.45}px) scale(1.5)`;
+    R.cancelArmed = cx < -CANCEL_DX * 0.85; c.classList.toggle('rec-cancel', R.cancelArmed);
+    if (lk >= 1) lockRec();
   }
   function pressEnd() {
     if (!press) return;
@@ -597,7 +647,7 @@
   }
   sendBtn.addEventListener('pointerdown', e => {
     if ($('#msgInput').value.trim()) return;           // с текстом работает обычный click
-    e.preventDefault(); sendBtn.setPointerCapture?.(e.pointerId); pressStart(e.clientX, e.clientY);
+    e.preventDefault(); try { sendBtn.setPointerCapture?.(e.pointerId); } catch {} pressStart(e.clientX, e.clientY);
   });
   sendBtn.addEventListener('pointermove', e => pressMove(e.clientX, e.clientY));
   sendBtn.addEventListener('pointerup', pressEnd);
@@ -611,18 +661,21 @@
   function setRecUI(on) {
     const c = $('#chat');
     c.classList.toggle('rec-on', on); c.classList.toggle('rec-voice', on && R?.mode === 'voice'); c.classList.toggle('rec-video', on && R?.mode === 'video');
-    if (!on) c.classList.remove('rec-locked', 'rec-cancel');
+    if (!on) { c.classList.remove('rec-locked', 'rec-cancel'); c.style.removeProperty('--lk'); c.style.removeProperty('--cx'); c.style.removeProperty('--cxk'); c.style.removeProperty('--lvl'); sendBtn.style.transform = ''; }
     $('#recStatus').hidden = !on; $('#msgInput').hidden = on; $('#recTrash').hidden = !(on && R?.locked);
     $('#circleRec').hidden = !(on && R?.mode === 'video');
-    if (on) { $('#recTime').textContent = '0:00'; $('#recHint').textContent = '‹ влево — отмена'; setProg(0); }
+    if (on) { $('#recTime').textContent = '0:00'; setProg(0); }
     if (on && R?.locked) sendBtn.innerHTML = '<svg><use href="#i-send"/></svg>';
     if (!on) updateSendBtn();
   }
   function setProg(p) { const c = $('#circleProg'), len = 2 * Math.PI * 48; c.style.strokeDasharray = len; c.style.strokeDashoffset = len * (1 - Math.min(1, p)); }
   function lockRec() {
     if (!R || R.locked) return;
-    R.locked = true; press = null;
-    $('#chat').classList.add('rec-locked'); $('#recTrash').hidden = false; $('#recHint').textContent = 'запись без рук';
+    R.locked = true; press = null; sendBtn.style.transform = '';
+    const c = $('#chat'); c.classList.add('rec-locked', 'rec-justlocked'); c.style.setProperty('--lk', '1'); c.style.removeProperty('--cx'); c.classList.remove('rec-cancel');
+    setTimeout(() => c.classList.remove('rec-justlocked'), 700);
+    try { navigator.vibrate?.(20); } catch {}
+    $('#recTrash').hidden = false;
     sendBtn.innerHTML = '<svg><use href="#i-send"/></svg>'; sendBtn.setAttribute('aria-label', 'Остановить и отправить');
   }
 
@@ -648,6 +701,14 @@
     r.mr = new MediaRecorder(r.stream, opts);
     r.mr.ondataavailable = e => e.data.size && r.chunks.push(e.data);
     r.mr.start(250); r.t0 = Date.now(); r.ready = true;
+    // уровень громкости — «дышащий» ореол вокруг кнопки, как в Telegram
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext, ac = r.ac = new AC(), an = ac.createAnalyser(); an.fftSize = 256;
+      ac.createMediaStreamSource(r.stream).connect(an); const buf = new Uint8Array(an.fftSize);
+      const tick = () => { if (R !== r) return; an.getByteTimeDomainData(buf); let sum = 0; for (const v of buf) sum += (v - 128) ** 2;
+        $('#chat').style.setProperty('--lvl', Math.min(1, Math.sqrt(sum / buf.length) / 40).toFixed(2)); requestAnimationFrame(tick); };
+      tick();
+    } catch {}
     const max = r.mode === 'voice' ? 300 : 60;
     r.timer = setInterval(() => {
       const s = (Date.now() - r.t0) / 1000;
@@ -658,7 +719,7 @@
   }
   function recFinish(send) {
     const r = R; if (!r) return;
-    R = null; clearInterval(r.timer); setRecUI(false);
+    R = null; clearInterval(r.timer); setRecUI(false); try { r.ac?.close(); } catch {}
     const v = $('#circleVideo'); v.pause(); v.srcObject = null;
     if (!r.ready) { r.aborted = true; if (send) HF.toast('Удерживайте кнопку, чтобы записать'); return; }
     r.mr.onstop = async () => {
@@ -672,7 +733,7 @@
     };
     try { r.mr.stop(); } catch { r.stream.getTracks().forEach(t => t.stop()); }
   }
-  $('#recTrash').onclick = () => recFinish(false);
+  $('#recTrash').onclick = () => recFinish(false); $('#recCancel').onclick = () => recFinish(false);
 
   /* ================= share (TikTok-style) ================= */
   let shareData = null, toProfile = false; const picked = new Set();

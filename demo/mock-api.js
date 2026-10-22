@@ -9,7 +9,11 @@ window.HFMockApi = (() => {
     const st = { me: null, fr: { 2: 'friends', 3: 'friends', 4: 'incoming' }, id: 10,
       msgs: [ { id: 1, from: 2, to: 1, kind: 'text', body: 'Привет! Как питание сегодня?', created: t - 36e5 },
         { id: 2, from: 2, to: 1, kind: 'meal', body: 'мой обед', media: '', meta: { title: 'Плов с салатом', kcal: 640, p: 28, f: 24, c: 76 }, created: t - 30e5 },
-        { id: 3, from: 3, to: 1, kind: 'text', body: 'Завтра на площадку в 8?', created: t - 9e5 } ], media: {} };
+        { id: 3, from: 3, to: 1, kind: 'text', body: 'Завтра на площадку в 8?', created: t - 9e5 },
+        { id: 4, from: 2, to: 1, kind: 'voice', body: '', media: '', meta: { dur: 14 }, created: t - 29e5 },
+        { id: 5, from: 2, to: 1, kind: 'video', body: '', media: '', meta: { dur: 9 }, created: t - 28e5 },
+        { id: 6, from: 1, to: 2, kind: 'text', body: 'Выглядит супер! Сколько белка вышло?', created: t - 27e5 },
+        { id: 7, from: 1, to: 2, kind: 'text', body: '🔥', created: t - 26.9e5 } ], media: {} };
     const pubU = u => ({ ...u, state: st.fr[u.id] || 'none' });
     return async (path, o) => {
       await new Promise(r => setTimeout(r, 120));
@@ -49,7 +53,7 @@ window.HFMockApi = (() => {
       if (cm) {
         const pid = +cm[1];
         if (M === 'GET') { const after = +u.searchParams.get('after') || 0; const ms = st.msgs.filter(m => (m.from === pid || m.to === pid) && m.id > after); ms.forEach(m => { if (m.from === pid) m.read = true; });
-          return { messages: ms, peer: users.find(x => x.id === pid), peerRead: 0, friends: st.fr[pid] === 'friends' }; }
+          return { messages: ms, peer: users.find(x => x.id === pid), peerRead: pid === 2 ? 6 : 0, friends: st.fr[pid] === 'friends' }; }
         let media = body.media ? st.media[body.media] : '', meta = body.meta || null;
         if (body.kind === 'post') { const x = st.posts.find(q => q.id === +body.post), au = x.user_id === 1 ? st.me : users.find(y => y.id === x.user_id); media = x.media; meta = { ...x.meta, postId: x.id, author: { name: au.name, username: au.username } }; }
         const ro = body.reply && st.msgs.find(x => x.id === +body.reply);

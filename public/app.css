@@ -1185,3 +1185,123 @@ html { touch-action: manipulation; }
 .friend.has-prog::before { left: 50%; margin-left: -36px; }
 /* iOS увеличивает экран при фокусе на поле с шрифтом меньше 16px */
 input, textarea, select { font-size: max(16px, 1em); }
+
+/* ===== v23: чат — пузыри, галочки, голосовые, кружки, запись без рук ===== */
+/* Hallmark · component: chat · genre: modern-minimal · theme: project tokens
+ * pre-emit critique: P4 H4 E4 S4 R5 V4 */
+.chat { background: var(--color-chat-bg); }
+.chat-top { background: color-mix(in oklch, var(--color-paper) 88%, transparent); -webkit-backdrop-filter: saturate(1.4) blur(14px); backdrop-filter: saturate(1.4) blur(14px); }
+.chat-scroll { padding-top: var(--space-sm); }
+
+/* день */
+.day-sep { position: sticky; top: 6px; z-index: 1; display: flex; justify-content: center; padding: 10px 0 6px; pointer-events: none; }
+.day-sep span { padding: 3px 11px; border-radius: 99px; font-size: 12px; font-weight: 700; color: var(--color-ink-2);
+  background: color-mix(in oklch, var(--color-paper) 82%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: 0 0 0 1px var(--color-rule); }
+
+/* строки и группы */
+.msg { padding: 1px 0; }
+.msg:not(.cont) { padding-top: 7px; }
+.msg > .bubble { max-width: min(82%, 420px); }
+
+/* пузыри */
+.bubble { padding: 7px 11px 7px 12px; border-radius: 19px; line-height: 1.36; font-size: 16px; box-shadow: 0 1px 1.5px oklch(0% 0 0 / 0.08); }
+.theirs .bubble { background: var(--color-bub-theirs); color: var(--color-ink); border-radius: 19px 19px 19px 6px; }
+.theirs.cont .bubble { border-top-left-radius: 6px; }
+.mine .bubble { background: var(--color-bub-mine); color: var(--color-bub-mine-ink); border-radius: 19px 19px 6px 19px; }
+.mine.cont .bubble { border-top-right-radius: 6px; }
+.bubble p { margin: 0; }
+
+/* время и галочки — в конце последней строки, текст обтекает их */
+.meta { position: absolute; right: 10px; bottom: 5px; display: inline-flex; align-items: center; gap: 3px; font-size: 11px; line-height: 1; white-space: nowrap; color: var(--color-muted); font-variant-numeric: tabular-nums; pointer-events: none; }
+.mine .meta { color: var(--color-bub-meta); }
+.meta time, .bubble .meta time, .circle-msg .meta time { display: inline; margin: 0; padding: 0; opacity: 1; font-size: inherit; background: none; position: static; transform: none; }
+.mine.seen time::after { content: none; }
+.meta-sp { display: inline-block; width: 38px; height: 1px; }
+.mine .meta-sp { width: 58px; }
+.tick { width: 18px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.tick .t2 { opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+.msg.seen .tick { color: var(--color-tick-read); }
+.msg.seen .tick .t2 { opacity: 1; }
+
+/* только эмодзи — крупно, без пузыря */
+.emoji-only .bubble { background: transparent; box-shadow: none; font-size: 44px; line-height: 1.1; padding: 2px 4px 18px; }
+.emoji-only .meta-sp { display: none; }
+.emoji-only .meta { bottom: 0; padding: 2px 6px; border-radius: 99px; background: color-mix(in oklch, var(--color-paper) 80%, transparent); }
+
+/* вложения */
+.media-bubble { padding: 4px; }
+.media-bubble .cap { margin: 7px 7px 1px; font-size: 15px; }
+.media-bubble.no-cap { padding-bottom: 22px; }
+.media-bubble.no-cap .meta { bottom: 5px; }
+.mine .att { box-shadow: none; }
+
+/* голосовые */
+.bubble.voice { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 10px; align-items: center; width: 268px; max-width: 100%; padding: 8px 12px 7px 8px; }
+.vplay { width: 44px; height: 44px; background: var(--color-ok); color: var(--color-on-ink); transition: transform var(--dur-fast) var(--ease-out); }
+[data-theme="dark"] .vplay, .theirs .vplay { color: oklch(100% 0 0); }
+.mine .vplay { background: var(--color-bub-mine-ink); color: var(--color-bub-mine); }
+.vplay:active { transform: scale(0.92); }
+.vplay svg { width: 20px; height: 20px; }
+.vbody { display: grid; gap: 3px; min-width: 0; }
+.wave { height: 26px; gap: 2px; cursor: pointer; touch-action: manipulation; }
+.wave i { width: 3px; flex: 1 1 3px; max-width: 4px; min-height: 3px; border-radius: 2px; opacity: 0.3; transition: opacity 120ms linear; }
+.wave i.on, .playing .wave i.on { opacity: 1; }
+.theirs .wave i { background: var(--color-ok); }
+.vfoot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.vdur { font-size: 12px; font-weight: 600; }
+.voice .meta { position: static; }
+
+/* кружки */
+.msg > .circle-msg { max-width: none; }
+.circle-msg { width: 220px; height: 220px; flex: none; box-shadow: 0 2px 10px oklch(0% 0 0 / 0.12); transition: width 280ms cubic-bezier(.2,.8,.2,1), height 280ms cubic-bezier(.2,.8,.2,1); -webkit-tap-highlight-color: transparent; }
+.circle-msg.playing { width: min(78vw, 300px); height: min(78vw, 300px); }
+.circle-msg video { display: block; }
+.cm-ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); pointer-events: none; opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+.cm-ring circle { fill: none; stroke: oklch(100% 0 0 / 0.92); stroke-width: 2.6; stroke-linecap: round; }
+.circle-msg.playing .cm-ring { opacity: 1; }
+.cm-dur, .circle-msg .meta { position: absolute; bottom: 12px; padding: 3px 8px; border-radius: 99px; background: oklch(0% 0 0 / 0.42); color: oklch(100% 0 0); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cm-dur { left: 14px; }
+.circle-msg .meta { right: 14px; }
+.circle-msg .msg.seen .tick, .msg.seen .circle-msg .tick { color: oklch(88% 0.15 150); }
+.circle-msg time { transform: none; left: auto; }
+
+/* поле ввода */
+.composer { position: relative; z-index: 3; background: var(--color-paper); border-top: 1px solid var(--color-rule); }
+.cmp-input { background: var(--color-chat-bg); box-shadow: inset 0 0 0 1px var(--color-rule); font-size: 16px; }
+.cmp-main { transition: transform 160ms var(--ease-out), background-color var(--dur-fast) var(--ease-out), box-shadow 80ms linear; }
+
+/* запись: статус, «влево — отмена», ореол громкости */
+.rec-status { overflow: hidden; }
+.rec-hint { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; margin-right: 6px; color: var(--color-muted); font-size: var(--text-sm); white-space: nowrap; flex: none;
+  transform: translateX(var(--cx, 0px)); opacity: calc(1 - var(--cxk, 0) * 0.85); }
+.rec-hint svg { width: 16px; height: 16px; animation: nudge 1.2s var(--ease-in-out) infinite; }
+@keyframes nudge { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(-4px); } }
+.rec-cancel-btn { display: none; margin-left: auto; border: 0; background: none; color: var(--color-danger); font-weight: 700; min-height: 40px; padding: 0 8px; }
+.rec-locked .rec-hint { display: none; }
+.rec-locked .rec-cancel-btn { display: inline-flex; align-items: center; }
+.rec-on #sendBtn { transform: scale(1.5); background: var(--color-danger); color: oklch(100% 0 0);
+  box-shadow: 0 0 0 calc(4px + var(--lvl, 0) * 22px) color-mix(in oklch, var(--color-danger) 20%, transparent); }
+.rec-locked #sendBtn { transform: none; background: var(--color-ok); color: oklch(100% 0 0); box-shadow: 0 0 0 calc(2px + var(--lvl, 0) * 12px) color-mix(in oklch, var(--color-ok) 22%, transparent); }
+.rec-cancel #sendBtn { background: var(--color-muted); }
+
+/* «замок» над кнопкой: тянешь вверх — он едет навстречу и защёлкивается */
+.rec-lockpill { position: absolute; right: calc(max(12px, env(safe-area-inset-right, 0px)) + 2px); bottom: calc(100% + 18px); width: 40px; height: calc(84px - var(--lk, 0) * 36px);
+  display: grid; justify-items: center; align-content: start; gap: 2px; padding-top: 9px; border-radius: 20px; background: var(--color-card); color: var(--color-ink-2);
+  box-shadow: 0 0 0 1px var(--color-rule), 0 6px 18px oklch(0% 0 0 / 0.14); opacity: 0; transform: translateY(calc(var(--lk, 0) * 28px)) scale(0.6); pointer-events: none;
+  transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out); }
+.rec-on .rec-lockpill { opacity: 1; transform: translateY(calc(var(--lk, 0) * 28px)) scale(1); }
+.rec-locked .rec-lockpill { opacity: 0; transform: translateY(28px) scale(0.8); transition-delay: 350ms; }
+.rec-justlocked .rec-lockpill { opacity: 1; color: var(--color-ok); transition-delay: 0s; }
+.lk-ico { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.lk-shackle { transform: translateY(calc((1 - var(--lk, 0)) * -3px)); transition: transform 120ms var(--ease-out); }
+.rec-locked .lk-shackle { transform: none; }
+.lk-chev { width: 18px; height: 18px; transform: rotate(-90deg); opacity: calc(1 - var(--lk, 0)); animation: lkup 1.2s var(--ease-in-out) infinite; }
+@keyframes lkup { 0%, 100% { translate: 0 2px; } 50% { translate: 0 -3px; } }
+@media (prefers-reduced-motion: reduce) { .lk-chev, .rec-hint svg { animation: none; } .circle-msg { transition: none; } }
+.circle-msg { overflow: visible; background: transparent; border-radius: 50%; }
+.circle-msg video { border-radius: 50%; background: var(--color-paper-3); }
+.cm-dur { left: 4px; bottom: 2px; }
+.circle-msg .meta { right: 4px; bottom: 2px; }
+.rec-lockpill { bottom: calc(100% + 40px); transform: translateY(calc(var(--lk, 0) * 22px)) scale(0.6); }
+.rec-on .rec-lockpill { transform: translateY(calc(var(--lk, 0) * 22px)) scale(1); }
+#recTrash { display: none; }   /* в режиме «без рук» отмена — текстовой кнопкой «Отмена», корзина дублировала её */
