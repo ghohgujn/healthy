@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS health (user_id INTEGER NOT NULL, date TEXT NOT NULL,
 const stmts = new Map();
 const q = sql => { let st = stmts.get(sql); if (!st) { st = db.prepare(sql); stmts.set(sql, st); } return st; };
 // миграции: добавляем колонки, если их ещё нет
-for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER'], ['users', 'share_summary', 'INTEGER NOT NULL DEFAULT 1']])
+for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER'], ['users', 'share_summary', 'INTEGER NOT NULL DEFAULT 1'], ['posts', 'gallery', 'TEXT']])
   if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${def}`);
 db.exec(`CREATE TABLE IF NOT EXISTS comment_likes (comment_id INTEGER NOT NULL, user_id INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (comment_id, user_id));
 CREATE INDEX IF NOT EXISTS posts_vis ON posts (vis, id);
@@ -212,7 +212,8 @@ const summaryFor = (me, u) => u.id !== me && u.share_summary !== 0 && areFriends
 /* ---------------- публикации ---------------- */
 function shapePost(p, me) {
   const author = q('SELECT * FROM users WHERE id = ?').get(p.user_id);
-  return { id: p.id, author: pub(author), media: p.media ? `/media/${p.media}` : '', caption: p.caption || '',
+  const gallery = p.gallery ? JSON.parse(p.gallery).map(id => `/media/${id}`) : [];
+  return { id: p.id, author: pub(author), media: p.media ? `/media/${p.media}` : '', gallery: p.media && gallery.length ? [`/media/${p.media}`, ...gallery] : [], caption: p.caption || '',
     meta: p.meta ? JSON.parse(p.meta) : null, created: p.created,
     likes: q('SELECT COUNT(*) n FROM likes WHERE post_id = ?').get(p.id).n,
     liked: Boolean(q('SELECT 1 FROM likes WHERE post_id = ? AND user_id = ?').get(p.id, me)),
@@ -379,7 +380,7 @@ async function serveMedia(req, res, id) {
   const isAvatar = q('SELECT 1 FROM users WHERE avatar = ?').get(id);
   const allowed = isAvatar || isAdmin(me) || (me && (m.owner === me.id ||
     q('SELECT 1 FROM messages WHERE media = ? AND (sender = ? OR recipient = ?)').get(id, me.id, me.id) ||
-    q('SELECT user_id, vis FROM posts WHERE media = ?').all(id).some(p => canSeePost(me.id, p))));
+    q('SELECT user_id, vis FROM posts WHERE media = ? OR gallery LIKE ?').all(id, `%"${id}"%`).some(p => canSeePost(me.id, p))));
   if (!allowed) { res.writeHead(403); return res.end(); }
   const range = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
   // имена файлов случайные и никогда не меняются — браузер может хранить их «навсегда»
@@ -600,8 +601,11 @@ async function api(req, res, url) {
     if (!m || !m.type.startsWith('image/')) throw fail(400, 'Нужна фотография');
     const x = b.meta && typeof b.meta === 'object' ? b.meta : {};
     const meta = JSON.stringify({ title: String(x.title || '').slice(0, 80), kcal: num(x.kcal), p: num(x.p), f: num(x.f), c: num(x.c),
-      items: (Array.isArray(x.items) ? x.items : []).slice(0, 12).map(i => ({ name: String(i.name || '').slice(0, 40), grams: num(i.grams) })) });
-    const r = q('INSERT INTO posts (user_id, media, caption, meta, created, vis) VALUES (?, ?, ?, ?, ?, ?)').run(me.id, m.id, String(b.caption || '').slice(0, 500), meta, now(), b.vis === 'friends' ? 'friends' : 'public');
+      items: (Array.isArray(x.items) ? x.items : []).slice(0, 12).map(i => ({ name: String(i.name || '').slice(0, 40), grams: num(i.grams) })),
+      ...(Array.isArray(x.meals) && x.meals.length ? { day: true, meals: x.meals.slice(0, 10).map(i => ({ title: String(i.title || '').slice(0, 80), kcal: num(i.kcal), p: num(i.p), f: num(i.f), c: num(i.c), time: String(i.time || '').slice(0, 5) })) } : {}) });
+    // мультипост «мой день»: до 10 фото, у каждого — своя карточка блюда в meta.meals
+    const gal = (Array.isArray(b.gallery) ? b.gallery : []).slice(0, 9).map(String).filter(id => id !== m.id && q('SELECT 1 FROM media WHERE id = ? AND owner = ? AND type LIKE ?').get(id, me.id, 'image/%'));
+    const r = q('INSERT INTO posts (user_id, media, caption, meta, created, vis, gallery) VALUES (?, ?, ?, ?, ?, ?, ?)').run(me.id, m.id, String(b.caption || '').slice(0, 500), meta, now(), b.vis === 'friends' ? 'friends' : 'public', gal.length ? JSON.stringify(gal) : null);
     return send(res, 200, { post: shapePost(q('SELECT * FROM posts WHERE id = ?').get(r.lastInsertRowid), me.id) });
   }
   if (p === '/api/feed' && M === 'GET') {
@@ -626,8 +630,10 @@ async function api(req, res, url) {
       q('DELETE FROM comment_likes WHERE comment_id IN (SELECT id FROM comments WHERE post_id = ?)').run(post.id);
       q('DELETE FROM comments WHERE post_id = ?').run(post.id);
       q('DELETE FROM posts WHERE id = ?').run(post.id);
-      if (post.media && !q('SELECT 1 FROM messages WHERE media = ?').get(post.media) && !q('SELECT 1 FROM posts WHERE media = ?').get(post.media) && !q('SELECT 1 FROM users WHERE avatar = ?').get(post.media)) {
-        q('DELETE FROM media WHERE id = ?').run(post.media); await unlink(join(MEDIA, post.media)).catch(() => {});
+      for (const mid of [post.media, ...(post.gallery ? JSON.parse(post.gallery) : [])]) {
+        if (mid && !q('SELECT 1 FROM messages WHERE media = ?').get(mid) && !q('SELECT 1 FROM posts WHERE media = ? OR gallery LIKE ?').get(mid, `%"${mid}"%`) && !q('SELECT 1 FROM users WHERE avatar = ?').get(mid)) {
+          q('DELETE FROM media WHERE id = ?').run(mid); await unlink(join(MEDIA, mid)).catch(() => {});
+        }
       }
       return send(res, 200, { ok: true });
     }

@@ -752,8 +752,10 @@
   async function shareMeal(d) {
     if (!me) { HF.toast('Войдите, чтобы делиться с друзьями'); HF.showTab('chats'); return; }
     shareData = d; picked.clear(); toProfile = false; $('#shareText').value = '';   // ничего не выбрано заранее — человек сам решает, куда отправить
-    $('#shareTitle').textContent = d.post ? 'Отправить публикацию' : 'Отправить другу';
-    $('#sharePreview').innerHTML = `${d.thumb ? `<img src="${esc(d.thumb)}" alt="">` : ''}<span><b></b><small>${Math.round(d.totals.kcal)} ккал · Б ${Math.round(d.totals.p)} · Ж ${Math.round(d.totals.f)} · У ${Math.round(d.totals.c)}</small></span>`;
+    $('#shareTitle').textContent = d.post ? 'Отправить публикацию' : d.day ? 'Выложить день' : 'Отправить другу';
+    $('#sharePreview').innerHTML = d.day
+      ? `<span class="sp-stack">${d.thumbs.slice(0, 4).map((t, i) => `<img src="${esc(t)}" alt="" style="--i:${i}">`).join('')}</span><span><b></b><small>${d.meals.length} ${((n) => n % 10 === 1 && n % 100 !== 11 ? 'приём' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'приёма' : 'приёмов')(d.meals.length)} пищи · ${Math.round(d.totals.kcal)} ккал · Б ${Math.round(d.totals.p)} · Ж ${Math.round(d.totals.f)} · У ${Math.round(d.totals.c)}</small></span>`
+      : `${d.thumb ? `<img src="${esc(d.thumb)}" alt="">` : ''}<span><b></b><small>${Math.round(d.totals.kcal)} ккал · Б ${Math.round(d.totals.p)} · Ж ${Math.round(d.totals.f)} · У ${Math.round(d.totals.c)}</small></span>`;
     $('#sharePreview b').textContent = d.name;
     if (!friends.length) await refreshSocial();
     const row = $('#shareFriends'); row.innerHTML = '';
@@ -779,6 +781,19 @@
         const body = $('#shareText').value.trim();
         for (const id of picked) await api(`/api/chats/${id}`, { method: 'POST', body: { kind: 'post', post: d.post, body } });
         HF.closeDialog($('#shareSheet')); HF.toast(picked.size > 1 ? `Отправлено ${picked.size} друзьям` : 'Отправлено'); refreshSocial(); return;
+      }
+      if (d.day) {   // мультипост: все фото дня одной публикацией, друзьям — ссылкой на неё или блюдами по очереди
+        const body = $('#shareText').value.trim(), ids = [];
+        for (let i = 0; i < d.images.length; i++) { btn.textContent = `Загружаю фото ${i + 1} из ${d.images.length}…`; ids.push((await uploadImage(d.images[i])).id); }
+        const meta = { title: d.name, kcal: d.totals.kcal, p: d.totals.p, f: d.totals.f, c: d.totals.c, meals: d.meals };
+        if (toProfile) {
+          const r = await api('/api/posts', { method: 'POST', body: { media: ids[0], gallery: ids.slice(1), caption: body, meta, vis: shareVis } });
+          for (const id of picked) await api(`/api/chats/${id}`, { method: 'POST', body: { kind: 'post', post: r.post.id, body } });
+        } else for (const id of picked) for (let i = 0; i < ids.length; i++)
+          await api(`/api/chats/${id}`, { method: 'POST', body: { kind: 'meal', media: ids[i], meta: d.meals[i], body: i === 0 ? body : '' } });
+        HF.closeDialog($('#shareSheet'));
+        HF.toast(toProfile && picked.size ? `День опубликован и отправлен ${picked.size}` : toProfile ? 'День опубликован в профиле' : 'Отправлено');
+        refreshSocial(); window.HFPosts?.refresh(); return;
       }
       let media;
       if (d.image || d.thumb) media = (await uploadImage(d.image || d.thumb)).id;   // полное фото — для эстетики ленты

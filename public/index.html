@@ -113,7 +113,8 @@
       </section>
 
       <section class="meals" aria-labelledby="mealsTitle">
-        <h2 id="mealsTitle" class="h2 meals-title">Приёмы пищи</h2>
+        <div class="meals-head"><h2 id="mealsTitle" class="h2 meals-title">Приёмы пищи</h2>
+          <button class="day-share" id="shareDay" hidden><svg aria-hidden="true"><use href="#i-grid"/></svg>Выложить день</button></div>
         <ul class="meal-list" id="mealList"></ul>
         <div class="empty" id="mealsEmpty">
           <p class="empty-title">Пока пусто</p>
@@ -277,9 +278,6 @@
       <div class="sheet-photo">
         <img id="mealPhoto" alt="">
         <button class="icon-btn icon-btn-float" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button>
-        <div class="photo-rail" id="mealRail" hidden>
-          <button class="rail-btn" id="shareMeal" aria-label="Поделиться: другу или в профиль"><span class="rail-ico"><svg><use href="#i-share"/></svg></span></button>
-        </div>
       </div>
       <div class="sheet-body">
         <div class="loading" id="mealLoading">
@@ -308,6 +306,11 @@
             <div class="total"><i style="--c: var(--color-carb)"></i><b id="tC">0</b><span>углев.</span></div>
           </div>
 
+          <div class="portion" role="radiogroup" aria-labelledby="portionLbl">
+            <span class="field-label" id="portionLbl">Сколько съели</span>
+            <div class="seg portion-seg" id="portion"></div>
+          </div>
+
           <div class="question" id="question" hidden>
             <p class="q-text" id="qText"></p>
             <div class="chips" id="qOptions"></div>
@@ -329,6 +332,7 @@
       </div>
       <footer class="sheet-foot" id="mealFoot" hidden>
         <button class="btn btn-icon btn-ghost" id="deleteMeal" aria-label="Удалить приём пищи" hidden><svg><use href="#i-trash"/></svg></button>
+        <button class="btn btn-share" id="shareMeal" aria-label="Поделиться: другу или в профиль"><svg aria-hidden="true"><use href="#i-share"/></svg><span>Поделиться</span></button>
         <button class="btn btn-primary" id="saveMeal">Добавить в дневник</button>
       </footer>
     </section>

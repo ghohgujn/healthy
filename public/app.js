@@ -16,11 +16,12 @@
       const meals = (Array.isArray(v.meals) ? v.meals : []).filter(m => m && Array.isArray(m.items)).map(m => ({
         id: String(m.id || Math.random().toString(36).slice(2)), time: +m.time || Date.parse(k), type: String(m.type || 'Приём пищи'),
         name: String(m.name || 'Блюдо'), thumb: typeof m.thumb === 'string' && m.thumb.startsWith('data:image/') ? m.thumb : '',
-        model: String(m.model || ''),
+        model: String(m.model || ''), portion: Math.max(0.1, Math.min(1, +m.portion || 1)),
         items: m.items.map(i => ({
           name: String(i.name || 'Продукт'), role: ['food', 'drink', 'sauce'].includes(i.role) ? i.role : 'food',
           fat: ['none', 'light', 'heavy', 'included'].includes(i.fat) ? i.fat : 'none',
           grams: +i.grams || 0, kcal_100: +i.kcal_100 || 0, p_100: +i.p_100 || 0, f_100: +i.f_100 || 0, c_100: +i.c_100 || 0,
+          ...(+i.g0 > 0 ? { g0: +i.g0 } : {}),
         })),
       }));
       const acts = (Array.isArray(v.acts) ? v.acts : []).filter(a => a && HFCalc.ACTIVITIES[a.type]).map(a => ({
@@ -139,7 +140,7 @@
     $('#actLine').hidden = !bonus; $('#actLine').textContent = `+${bonus} ккал за активность (≈)`;
     $('#setupBanner').hidden = db.profile.configured;
     const num = $('#calLeft');
-    num.textContent = r0(Math.abs(left)); num.classList.toggle('over', left < 0);
+    tween(num, Math.abs(left)); num.classList.toggle('over', left < 0);
     $('#calTitle').textContent = left < 0 ? 'ккал сверх цели' : 'ккал осталось';
     $('#calEaten').textContent = `съедено ${r0(t.kcal)} из ${goal}`;
     setRing($('#calRing'), t.kcal / goal);
@@ -151,16 +152,22 @@
   }
 
   const GLASS = 'M3 3h22l-2.6 30.2a3 3 0 0 1-3 2.8H8.6a3 3 0 0 1-3-2.8z';
+  // волна шире стакана в два периода — сдвиг на один период даёт бесшовную анимацию
+  const WAVE = (y, a) => `M-28 ${y}` + 'q3.5-' + a + ' 7 0t7 0'.repeat(1) + ' t7 0'.repeat(6) + ' V40H-28z';
   function glassSvg(i) {
     return `<svg viewBox="0 0 28 38" aria-hidden="true"><defs><clipPath id="gc${i}"><path d="${GLASS}"/></clipPath></defs>
       <path class="g-body" d="${GLASS}"/>
-      <g clip-path="url(#gc${i})"><rect class="g-water" x="0" y="12" width="28" height="26"/><path class="g-wave" d="M0 13q3.5-3 7 0t7 0 7 0 7 0v3H0z"/></g>
+      <g clip-path="url(#gc${i})"><g class="g-fill"><path class="g-wave2" d="${WAVE(12, 2.4)}"/><path class="g-wave" d="${WAVE(13, 3)}"/></g>
+        <circle class="g-bub" cx="9" cy="33" r="1"/><circle class="g-bub" cx="17" cy="35" r="0.8"/><circle class="g-bub" cx="13" cy="34" r="1.2"/></g>
+      <rect class="g-stream" x="12.8" y="-14" width="2.4" height="30" rx="1.2"/>
       <path class="g-shine" d="M8.2 10l1.3 17"/><path class="g-plus" d="M14 17v8M10 21h8"/><path class="g-out" d="${GLASS}"/></svg>`;
   }
+  let waterPrev = null;   // что было нарисовано в прошлый раз — чтобы налить/вылить только изменившиеся стаканы
   function renderWater() {
     const s = db.settings, ml = day(selected).water;
     const count = Math.min(16, Math.max(6, Math.ceil(s.waterGoal / s.glass)));
     const filled = Math.floor(ml / s.glass + 1e-6), shown = Math.min(filled, count);
+    const prev = waterPrev && waterPrev.day === selected ? waterPrev.shown : shown; waterPrev = { day: selected, shown };
     $('#waterText').textContent = `${ml} / ${s.waterGoal} мл · стакан ${s.glass}`;
     $('#waterMinus').disabled = ml <= 0;
     $('#waterBarFill').style.transform = `scaleX(${Math.min(1, ml / s.waterGoal)})`;
@@ -168,13 +175,14 @@
     for (let i = 0; i < count; i++) {
       const b = document.createElement('button');
       const full = i < shown;
-      b.className = 'glass' + (full ? ' full' : i === shown ? ' next' : '');
+      b.className = 'glass' + (full ? ' full' : i === shown ? ' next' : '') + (full && i >= prev ? ' pour' : !full && i < prev ? ' drain' : '') + (full && i === shown - 1 ? ' top' : '');
+      if (full && i >= prev) b.style.setProperty('--d', `${(i - prev) * 110}ms`);
       b.innerHTML = glassSvg(i) + (i === count - 1 && filled > count ? `<span class="glass-extra">+${filled - count}</span>` : '');
       b.setAttribute('aria-label', full ? (i === shown - 1 ? `Убрать стакан, выпито ${filled}` : `Оставить ${i + 1} стакан(а)`) : `Выпито ${i + 1} стакан(а)`);
       b.onclick = () => {
         if (full && (i === shown - 1 || filled > count)) setWater(ml - s.glass); // last full glass, or over goal → minus one
         else if (full) setWater((i + 1) * s.glass);                     // tap an earlier full glass → set to it
-        else setWater(Math.max(ml, (i + 1) * s.glass));                 // tap an empty glass → fill up to it
+        else { setWater(Math.max(ml, (i + 1) * s.glass)); try { navigator.vibrate?.(10); } catch {} }   // tap an empty glass → fill up to it
       };
       box.appendChild(b);
     }
@@ -187,22 +195,26 @@
     renderWater();
   }
 
+  let freshMeal = null;   // только что добавленный приём — подсвечиваем в списке
+  const PORTIONS = [[1, 'Всё'], [0.75, '¾'], [0.5, '½'], [0.25, '¼']];   // «Сколько съели»
   function renderMeals() {
     const list = $('#mealList'); list.innerHTML = '';
     const meals = day(selected).meals.slice().sort((a, b) => a.time - b.time);
     $('#mealsEmpty').hidden = meals.length > 0;
+    $('#shareDay').hidden = meals.filter(m => m.thumb).length < 2;
     for (const m of meals) {
       const t = mealTotals(m.items), li = document.createElement('li'), b = document.createElement('button');
       b.className = 'meal';
       const time = new Date(m.time).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
       b.innerHTML = `${m.thumb ? '<img alt="">' : '<span class="ph"></span>'}
         <span><span class="meal-top"><span class="meal-title"></span><span class="meal-time"></span></span>
-        <span class="meal-kcal">${r0(t.kcal)} ккал</span>
+        <span class="meal-kcal">${r0(t.kcal)} ккал${(m.portion || 1) < 1 ? `<span class="meal-portion">${PORTIONS.find(([v]) => Math.abs(v - m.portion) < 0.01)?.[1] || Math.round(m.portion * 100) + '%'} порции</span>` : ''}</span>
         <span class="meal-macros"><span style="--c:var(--color-protein)">Б ${r0(t.p)}</span><span style="--c:var(--color-fat)">Ж ${r0(t.f)}</span><span style="--c:var(--color-carb)">У ${r0(t.c)}</span></span></span>`;
       if (m.thumb) b.querySelector('img').src = m.thumb;
       b.querySelector('.meal-title').textContent = m.name;
       b.querySelector('.meal-time').textContent = `${m.type} · ${time}`;
       b.onclick = () => openMeal(m);
+      if (m.id === freshMeal) { li.classList.add('fresh'); freshMeal = null; }
       li.appendChild(b); list.appendChild(li);
     }
   }
@@ -365,7 +377,6 @@
     $('#mealError').hidden = state !== 'error';
     $('#mealResult').hidden = state !== 'result';
     $('#mealFoot').hidden = state !== 'result';
-    $('#mealRail').hidden = state !== 'result';
   }
   function abortAnalysis() { inflight?.abort(); inflight = null; reqSeq++; }
 
@@ -412,7 +423,7 @@
       }
       if (my !== reqSeq || d !== draft) return; // stale response
       if (!data.items || !data.items.length) throw new Error('Не вижу еды на фото. Сфотографируйте тарелку сверху, целиком.');
-      Object.assign(d, { items: data.items, ai: JSON.parse(JSON.stringify(data.items)), question: data.question || '', options: data.options || [], model: data.model, confidence: data.confidence });
+      Object.assign(d, { items: data.items, portion: 1, ai: JSON.parse(JSON.stringify(data.items)), question: data.question || '', options: data.options || [], model: data.model, confidence: data.confidence });
       renderDraft(); showState('result'); $('#saveMeal').focus();
     } catch (err) {
       if (my !== reqSeq || d !== draft) return;
@@ -438,6 +449,7 @@
     const conf = { low: 'низкая', medium: 'средняя', high: 'высокая' }[draft.confidence] || '';
     $('#mealMeta').textContent = [draft.model, conf && `уверенность ${conf}`].filter(Boolean).join(' · ');
     $('#confNote').hidden = !(draft.confidence === 'low' && !draft.editing);
+    renderPortion();
     renderTotals();
 
     const q = $('#question');
@@ -455,7 +467,7 @@
 
     const ul = $('#items'); ul.innerHTML = '';
     draft.items.forEach((it, idx) => {
-      const li = document.createElement('li'); li.className = 'item';
+      const li = document.createElement('li'); li.className = 'item'; li.style.setProperty('--k', idx);
       const fatBtn = it.fat === 'included' ? '<span>жир в составе</span>'
         : `<button class="fat-tag" data-fat>${FAT_LABEL[it.fat]}</button>`;
       li.innerHTML = `<div><p class="item-name"></p><p class="item-sub"><span class="ikcal"></span>${fatBtn}</p></div>
@@ -465,7 +477,7 @@
       li.querySelector('.item-name').textContent = it.name;
       const input = li.querySelector('input'), fb = li.querySelector('[data-fat]');
       const upd = g => {
-        it.grams = Math.max(0, Math.min(2000, g)); input.value = r0(it.grams);
+        it.grams = Math.max(0, Math.min(2000, g)); input.value = r0(it.grams); it.g0 = it.grams / (draft.portion || 1);
         li.querySelector('.ikcal').textContent = `${r0(itemTotals(it).kcal)} ккал`;
         if (fb) { fb.textContent = FAT_LABEL[it.fat]; fb.setAttribute('aria-label', `Масло: ${FAT_LABEL[it.fat]}. Нажмите, чтобы изменить`); }
         renderTotals();
@@ -483,16 +495,38 @@
     });
     $('#saveMeal').disabled = !draft.items.length;
   }
+  // анимированный счётчик: цифры «докручиваются» до нового значения
+  function tween(el, to) {
+    const from = +el.dataset.v || 0; el.dataset.v = to;
+    if (from === to || matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = r0(to); return; }
+    const t0 = performance.now(), D = 420;
+    cancelAnimationFrame(el._raf);
+    const step = t => { const k = Math.min(1, (t - t0) / D), e = 1 - (1 - k) ** 3; el.textContent = r0(from + (to - from) * e); if (k < 1) el._raf = requestAnimationFrame(step); };
+    el._raf = requestAnimationFrame(step);
+  }
   function renderTotals() {
     const t = mealTotals(draft.items);
-    $('#tKcal').textContent = r0(t.kcal); $('#tP').textContent = r0(t.p); $('#tF').textContent = r0(t.f); $('#tC').textContent = r0(t.c);
+    tween($('#tKcal'), t.kcal); tween($('#tP'), t.p); tween($('#tF'), t.f); tween($('#tC'), t.c);
+  }
+  /* «Сколько съели»: не доел — выбираешь долю, граммы всех продуктов пересчитываются от полной порции */
+  function renderPortion() {
+    const box = $('#portion'); if (!box) return;
+    const cur = draft.portion || 1;
+    box.innerHTML = PORTIONS.map(([v, l]) => `<button role="radio" aria-checked="${Math.abs(cur - v) < 0.01}" data-portion="${v}">${l}</button>`).join('');
+    box.querySelectorAll('[data-portion]').forEach(b => b.onclick = () => setPortion(+b.dataset.portion));
+  }
+  function setPortion(p) {
+    const old = draft.portion || 1;
+    draft.items.forEach(i => { const g0 = i.g0 || i.grams / old; i.g0 = g0; i.grams = Math.round(g0 * p); });
+    $('#items').classList.remove('rescale'); draft.portion = p; renderDraft();
+    void $('#items').offsetWidth; $('#items').classList.add('rescale');
   }
 
   // Запись блюда в дневник (новое — добавляем, открытое из дневника — сохраняем правки). Возвращает запись или null.
   function commitDraft(quiet) {
     if (draft.editing) {
       const m = day(draft.day).meals.find(x => x.id === draft.id);
-      if (m) m.items = draft.items.map(i => ({ ...i }));
+      if (m) { m.items = draft.items.map(i => ({ ...i })); m.portion = draft.portion || 1; }
       const ok = save(); closeDialog(sheet); render();
       if (!quiet) toast(ok ? 'Сохранено' : STORAGE_FULL, null, null, ok ? 2200 : 6000);
       return ok ? { meal: m, isNew: false } : null;
@@ -500,8 +534,8 @@
     const now = new Date(), target = draft.day;
     const time = target === today() ? now : new Date(`${target}T${pad(now.getHours())}:${pad(now.getMinutes())}:00`);
     const meal = { id: Math.random().toString(36).slice(2), time: time.getTime(), type: mealType(time), name: titleOf(draft.items),
-      thumb: draft.thumb, items: draft.items.map(i => ({ ...i })), model: draft.model || '' };
-    day(target).meals.push(meal);
+      thumb: draft.thumb, items: draft.items.map(i => ({ ...i })), model: draft.model || '', portion: draft.portion || 1 };
+    day(target).meals.push(meal); freshMeal = meal.id;
     if (draft.image) photos.put(meal.id, draft.image);
     Object.assign(draft, { editing: true, id: meal.id });   // повторное нажатие не создаст дубль
     const ok = save();
@@ -516,7 +550,7 @@
 
   function openMeal(m) {
     abortAnalysis();
-    draft = { id: m.id, name: m.name, thumb: m.thumb, items: m.items.map(i => ({ ...i })), editing: true, day: selected, model: m.model, question: '', options: [] };
+    draft = { id: m.id, name: m.name, thumb: m.thumb, items: m.items.map(i => ({ ...i })), editing: true, day: selected, model: m.model, question: '', options: [], portion: m.portion || 1 };
     if (m.thumb) $('#mealPhoto').src = m.thumb; else $('#mealPhoto').removeAttribute('src');
     sheetMode(true); renderDraft(); showState('result'); openDialog(sheet, '#saveMeal');
   }
@@ -904,6 +938,17 @@
     // отправили другу или в профиль — блюдо сразу засчитывается в дневник
     window.HFSocial?.shareMeal({ name: $('#mealName').textContent, thumb: d.thumb, image, items: d.items.map(i => ({ ...i })), totals: mealTotals(d.items),
       onSent: () => draft === d && !sheet.hidden ? commitDraft(true) : null });
+  };
+  // мультипост «мой день»: все блюда дня с фото — каруселью в одной публикации
+  $('#shareDay').onclick = async () => {
+    const meals = day(selected).meals.filter(m => m.thumb).sort((a, b) => a.time - b.time).slice(0, 10);
+    if (meals.length < 2) return;
+    const images = await Promise.all(meals.map(async m => (await photos.get(m.id)) || m.thumb));
+    const tm = ts => new Date(ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    const dt = selected === today() ? '' : ' · ' + new Date(selected + 'T12:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+    window.HFSocial?.shareMeal({ day: true, name: `Мой день${dt}`, thumb: meals[0].thumb, thumbs: meals.map(m => m.thumb), images,
+      meals: meals.map(m => { const t = mealTotals(m.items); return { title: m.name, kcal: t.kcal, p: t.p, f: t.f, c: t.c, time: tm(m.time) }; }),
+      items: [], totals: dayTotals(selected) });
   };
   /* ---------- «Назад»: закрыть верхнее окно или вернуться на прошлую вкладку ---------- */
   // У окна может быть свой обработчик (чат останавливает опрос, камера — поток): el._back()

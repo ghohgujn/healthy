@@ -1305,3 +1305,105 @@ input, textarea, select { font-size: max(16px, 1em); }
 .rec-lockpill { bottom: calc(100% + 40px); transform: translateY(calc(var(--lk, 0) * 22px)) scale(0.6); }
 .rec-on .rec-lockpill { transform: translateY(calc(var(--lk, 0) * 22px)) scale(1); }
 #recTrash { display: none; }   /* в режиме «без рук» отмена — текстовой кнопкой «Отмена», корзина дублировала её */
+
+/* ===== v24: вода наливается, порция, «Поделиться», мультипост, анимации дневника ===== */
+/* стакан: вода поднимается снизу с волной, сверху льётся струйка, всплывают пузырьки */
+.glass .g-fill { transform: translateY(28px); transition: transform 600ms cubic-bezier(.3,.7,.3,1); }
+.glass.full .g-fill { transform: none; }
+.glass .g-wave { fill: var(--color-water); }
+.glass .g-wave2 { fill: var(--color-water-3); opacity: 0.7; }
+.glass .g-wave, .glass .g-wave2 { transform-box: view-box; }
+.glass.top .g-wave { animation: gwave 2.6s linear infinite; }
+.glass.top .g-wave2 { animation: gwave 3.4s linear infinite reverse; }
+.glass .g-bub { fill: oklch(100% 0 0 / 0.75); opacity: 0; }
+.glass .g-stream { fill: var(--color-water); opacity: 0; transform-box: fill-box; transform-origin: 50% 0; }
+.glass.pour .g-fill { animation: gfill 900ms cubic-bezier(.3,.7,.3,1) var(--d, 0ms) both; }
+.glass.pour .g-wave { animation: gwave 0.7s linear infinite; }
+.glass.pour .g-wave2 { animation: gwave 0.9s linear infinite reverse; }
+.glass.pour .g-stream { animation: gstream 900ms ease-out var(--d, 0ms) both; }
+.glass.pour .g-bub { animation: gbub 1100ms ease-out calc(var(--d, 0ms) + 250ms) both; }
+.glass.pour .g-bub:nth-of-type(2) { animation-delay: calc(var(--d, 0ms) + 420ms); }
+.glass.pour .g-bub:nth-of-type(3) { animation-delay: calc(var(--d, 0ms) + 560ms); }
+.glass.pour .g-out { animation: gglow 900ms ease-out var(--d, 0ms) both; }
+.glass.pour { animation: gpop 900ms cubic-bezier(.3,1.6,.5,1) var(--d, 0ms) both; }
+.glass.drain .g-fill { animation: gdrain 480ms cubic-bezier(.5,0,.7,.4) both; }
+@keyframes gwave { to { transform: translateX(14px); } }
+@keyframes gfill { from { transform: translateY(28px); } 70% { transform: translateY(-1.2px); } to { transform: none; } }
+@keyframes gdrain { from { transform: none; } to { transform: translateY(28px); } }
+@keyframes gstream { 0% { opacity: 0; transform: scaleY(0); } 15% { opacity: 1; transform: scaleY(1); } 70% { opacity: 1; transform: translateY(0) scaleY(1); } 100% { opacity: 0; transform: translateY(14px) scaleY(0.2); } }
+@keyframes gbub { 0% { opacity: 0; transform: translateY(0); } 25% { opacity: 1; } 100% { opacity: 0; transform: translateY(-20px); } }
+@keyframes gglow { 0% { stroke: var(--color-rule-strong); } 100% { stroke: var(--color-water); } }
+@keyframes gpop { 0% { transform: scale(1); } 30% { transform: scale(0.92); } 60% { transform: scale(1.06); } 100% { transform: scale(1); } }
+
+/* «Сколько съели» */
+.portion { display: grid; gap: 6px; margin: var(--space-md) 0 var(--space-xs); }
+.portion-seg { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.portion-seg button { font-size: var(--text-base, 1rem); font-weight: 700; }
+.items.rescale .item { animation: rescale 420ms var(--ease-out) both; }
+.items.rescale .item:nth-child(2) { animation-delay: 40ms; } .items.rescale .item:nth-child(3) { animation-delay: 80ms; } .items.rescale .item:nth-child(n+4) { animation-delay: 120ms; }
+@keyframes rescale { 0% { background: color-mix(in oklch, var(--color-ok) 14%, transparent); } 100% { background: transparent; } }
+.meal-portion { margin-left: 8px; padding: 1px 7px; border-radius: 99px; font-size: 11px; font-weight: 700; background: var(--color-paper-3); color: var(--color-ink-2); vertical-align: 1px; }
+
+/* «Поделиться» — заметная вторичная кнопка рядом с «Добавить» */
+#mealFoot { display: flex; gap: var(--space-xs); }
+#mealFoot #saveMeal { flex: 1 1 auto; }
+.btn-share { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 52px; padding: 0 16px; border-radius: var(--radius-pill, 999px);
+  border: 1.5px solid var(--color-ink); background: var(--color-card); color: var(--color-ink); font-weight: 700; transition: transform var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out); }
+.btn-share svg { width: 20px; height: 20px; }
+.btn-share:hover { background: var(--color-paper-2); }
+.btn-share:active { transform: scale(0.96); }
+.btn-share:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
+@media (max-width: 360px) { .btn-share span { display: none; } .btn-share { padding: 0 14px; } }
+
+/* «Выложить день» */
+.meals-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
+.meals-head .meals-title { margin-bottom: 0; }
+.day-share { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border-radius: 99px; border: 0; background: var(--color-ink); color: var(--color-on-ink); font-size: var(--text-sm); font-weight: 700; white-space: nowrap; }
+.day-share svg { width: 16px; height: 16px; }
+.day-share:active { transform: scale(0.96); }
+.sp-stack { position: relative; flex: none; width: 90px; height: 56px; }
+.sp-stack img { position: absolute; top: 0; left: calc(var(--i) * 12px); width: 52px; height: 56px; object-fit: cover; border-radius: 12px; box-shadow: 0 0 0 2px var(--color-card); transform: rotate(calc((var(--i) - 1.5) * 4deg)); }
+
+/* карусель мультипоста */
+.fc-gal { position: relative; }
+.gal-track { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }
+.gal-track::-webkit-scrollbar { display: none; }
+.gal-slide { position: relative; flex: 0 0 100%; margin: 0; scroll-snap-align: center; }
+.gal-slide img { width: 100%; display: block; aspect-ratio: 1; object-fit: cover; }
+.gal-cap { position: absolute; left: 10px; bottom: 10px; display: grid; gap: 1px; padding: 6px 10px; border-radius: 12px; background: oklch(0% 0 0 / 0.5); color: oklch(100% 0 0); max-width: calc(100% - 20px);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.gal-cap b { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gal-cap span { font-size: 12px; opacity: 0.9; }
+.gal-count { position: absolute; top: 10px; right: 10px; padding: 2px 8px; border-radius: 99px; background: oklch(0% 0 0 / 0.5); color: oklch(100% 0 0); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.gal-dots { position: absolute; left: 50%; bottom: -14px; transform: translateX(-50%); display: flex; gap: 4px; }
+.gal-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--color-paper-3); transition: background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); }
+.gal-dots i.on { background: var(--color-ink); transform: scale(1.2); }
+.fc-gal + .fc-actions { margin-top: 10px; }
+.pg-multi { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; color: oklch(100% 0 0); filter: drop-shadow(0 1px 2px oklch(0% 0 0 / 0.5)); }
+.pg-multi svg { width: 100%; height: 100%; }
+
+/* дневник: карточки въезжают по очереди, новый приём — с подсветкой */
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+#tab-today:not([hidden]) > section, #tab-today:not([hidden]) > .card { animation: rise 420ms var(--ease-out) both; }
+#tab-today:not([hidden]) > :nth-child(2) { animation-delay: 40ms; } #tab-today:not([hidden]) > :nth-child(3) { animation-delay: 80ms; }
+#tab-today:not([hidden]) > :nth-child(4) { animation-delay: 120ms; } #tab-today:not([hidden]) > :nth-child(n+5) { animation-delay: 160ms; }
+.meal-list li { animation: rise 360ms var(--ease-out) both; }
+.meal-list li:nth-child(2) { animation-delay: 50ms; } .meal-list li:nth-child(3) { animation-delay: 100ms; } .meal-list li:nth-child(n+4) { animation-delay: 140ms; }
+.meal-list li.fresh .meal { animation: fresh 1.4s var(--ease-out) both; }
+@keyframes fresh { 0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-ok) 60%, transparent); transform: scale(0.96); } 30% { box-shadow: 0 0 0 6px color-mix(in oklch, var(--color-ok) 25%, transparent); transform: scale(1.01); } 100% { box-shadow: 0 0 0 0 transparent; transform: none; } }
+.ring-fg { transition: stroke-dashoffset 900ms cubic-bezier(.3,.7,.3,1); }
+/* камера: затвор «щёлкает», кадр мигает; сканирование блюда — бегущая линия */
+#camShutter:active { transform: scale(0.88); }
+.cam.shot #camFrozen { animation: shotin 380ms cubic-bezier(.2,.8,.2,1) both; }
+@keyframes shotin { from { transform: scale(1.06); filter: brightness(1.6); } to { transform: none; filter: none; } }
+#mealPhoto { transition: transform 600ms var(--ease-out); }
+.sheet-wrap:not([hidden]) #mealResult:not([hidden]) .total { animation: rise 380ms var(--ease-out) both; }
+.sheet-wrap:not([hidden]) #mealResult:not([hidden]) .total:nth-child(2) { animation-delay: 50ms; } .sheet-wrap:not([hidden]) #mealResult:not([hidden]) .total:nth-child(3) { animation-delay: 100ms; } .sheet-wrap:not([hidden]) #mealResult:not([hidden]) .total:nth-child(4) { animation-delay: 150ms; }
+.sheet-wrap:not([hidden]) #mealResult:not([hidden]) .item { animation: rise 360ms var(--ease-out) both; animation-delay: calc(120ms + var(--k, 0) * 45ms); }
+@media (prefers-reduced-motion: reduce) {
+  .glass .g-fill, .glass.pour .g-fill, .glass.drain .g-fill, .glass.pour, .glass .g-wave, .glass .g-wave2, .glass.pour .g-stream, .glass.pour .g-bub,
+  #tab-today > *, .meal-list li, .meal-list li.fresh .meal, .total, .item { animation: none !important; transition: none !important; }
+}
+.sheet-wrap:not([hidden]) #mealResult:not([hidden]) #items.rescale .item { animation: rescale 520ms var(--ease-out) both; animation-delay: calc(var(--k, 0) * 40ms); }
+#mealFoot #saveMeal { min-width: 0; padding-inline: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 400px) { #mealFoot:has(#deleteMeal:not([hidden])) .btn-share span { display: none; } #mealFoot:has(#deleteMeal:not([hidden])) .btn-share { padding: 0 15px; } .btn-share { padding: 0 13px; } }

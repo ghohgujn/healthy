@@ -20,7 +20,7 @@
   function grid(posts, empty) {
     if (!posts.length) return `<div class="grid-empty"><svg><use href="#i-grid"/></svg><p>${empty}</p></div>`;
     return `<div class="post-grid">${posts.map(p => `<button class="pg-item" data-post="${p.id}" aria-label="${esc(p.meta?.title || 'Публикация')}, ${r0(p.meta?.kcal)} ккал">
-      <img src="${esc(p.media)}" alt="" loading="lazy">
+      <img src="${esc(p.media)}" alt="" loading="lazy">${(p.gallery || []).length > 1 ? `<span class="pg-multi" aria-hidden="true"><svg><use href="#i-grid"/></svg></span>` : ''}
       ${p.likes ? `<span class="pg-likes"><svg aria-hidden="true"><use href="#i-heart"/></svg>${compact(p.likes)}</span>` : ''}<span class="pg-meta"><span class="pg-kcal">${r0(p.meta?.kcal)}<small>ккал</small></span></span></button>`).join('')}</div>`;
   }
   const bindGrid = root => root.querySelectorAll('[data-post]').forEach(b => b.onclick = () => openPost(+b.dataset.post));
@@ -140,11 +140,31 @@
     } catch (e) { $('#feedView').innerHTML = `<p class="sub">${esc(e.message)}</p>`; }
     feedLoading = false;
   }
+  // одно фото или карусель «мой день»: листаешь блюда, на каждом — его название, время и калории
+  function photoBlock(p) {
+    const g = p.gallery || [];
+    if (g.length < 2) return `<div class="fc-photo" data-dbl="${p.id}"><img src="${esc(p.media)}" alt="${esc(p.meta?.title || 'Еда')}" loading="lazy"><i class="fc-burst"><svg><use href="#i-heart"/></svg></i></div>`;
+    const ms = p.meta?.meals || [];
+    return `<div class="fc-photo fc-gal" data-dbl="${p.id}" data-gal>
+      <div class="gal-track" role="group" aria-roledescription="карусель" aria-label="${esc(p.meta?.title || 'Мой день')}: ${g.length} фото">
+        ${g.map((u, i) => { const m = ms[i] || {}; return `<figure class="gal-slide" aria-label="${i + 1} из ${g.length}"><img src="${esc(u)}" alt="${esc(m.title || 'Блюдо')}" loading="lazy">
+          ${m.title ? `<figcaption class="gal-cap"><b>${esc(m.title)}</b><span>${m.time ? esc(m.time) + ' · ' : ''}${r0(m.kcal)} ккал</span></figcaption>` : ''}</figure>`; }).join('')}
+      </div>
+      <span class="gal-count" aria-hidden="true">1/${g.length}</span>
+      <span class="gal-dots" aria-hidden="true">${g.map((_, i) => `<i class="${i ? '' : 'on'}"></i>`).join('')}</span>
+      <i class="fc-burst"><svg><use href="#i-heart"/></svg></i></div>`;
+  }
+  function bindGal(root) {
+    root.querySelectorAll('[data-gal]').forEach(el => {
+      const tr = el.querySelector('.gal-track'), cnt = el.querySelector('.gal-count'), dots = [...el.querySelectorAll('.gal-dots i')];
+      tr.addEventListener('scroll', () => { const i = Math.round(tr.scrollLeft / tr.clientWidth); cnt.textContent = `${i + 1}/${dots.length}`; dots.forEach((d, k) => d.classList.toggle('on', k === i)); }, { passive: true });
+    });
+  }
   function card(p) {
     return `<article class="fcard" data-id="${p.id}">
       <header class="fc-head"><button class="fc-author" data-user="${p.author.id}">${avaHTML(p.author)}<span><b>${esc(p.author.name)}</b><small>${ago(p.created)}${p.mine && p.vis === 'friends' ? ' · только друзьям' : ''}</small></span></button>
         ${p.mine ? `<button class="icon-btn fc-del" data-del="${p.id}" aria-label="Удалить публикацию"><svg><use href="#i-trash"/></svg></button>` : ''}</header>
-      <div class="fc-photo" data-dbl="${p.id}"><img src="${esc(p.media)}" alt="${esc(p.meta?.title || 'Еда')}" loading="lazy"><i class="fc-burst"><svg><use href="#i-heart"/></svg></i></div>
+      ${photoBlock(p)}
       <div class="fc-actions">
         <button class="fc-btn like ${p.liked ? 'on' : ''}" data-like="${p.id}" aria-pressed="${p.liked}" aria-label="Нравится"><svg><use href="#${p.liked ? 'i-heart' : 'i-heart-o'}"/></svg><span>${p.likes || ''}</span></button>
         <button class="fc-btn" data-open="${p.id}" aria-label="Комментарии${p.comments ? `: ${p.comments}` : ''}"><svg><use href="#i-comment"/></svg><span>${p.comments || ''}</span></button>
@@ -163,6 +183,7 @@
     $('#feedMore')?.addEventListener('click', () => loadFeed(false));
   }
   function bindCards(root, list) {
+    bindGal(root);
     root.querySelectorAll('[data-user]').forEach(b => b.onclick = () => openUser(+b.dataset.user));
     root.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openPost(+b.dataset.open, true));
     root.querySelectorAll('[data-send]').forEach(b => b.onclick = () => {

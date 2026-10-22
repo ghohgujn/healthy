@@ -81,7 +81,7 @@ window.HFMockApi = (() => {
         st.id = 100;
       }
       const who = id => id === 1 ? st.me : users.find(x => x.id === id);
-      const shapeP = x => ({ id: x.id, author: who(x.user_id), media: x.media, caption: x.caption, meta: x.meta, created: x.created, vis: x.vis,
+      const shapeP = x => ({ id: x.id, author: who(x.user_id), media: x.media, gallery: x.gallery || [], caption: x.caption, meta: x.meta, created: x.created, vis: x.vis,
         likes: x.likesBase + x.likers.size, liked: x.likers.has(1), comments: st.comments.filter(c => c.post_id === x.id).length, mine: x.user_id === 1 });
       const friendOk = uid => uid === 1 || st.fr[uid] === 'friends';
       const vis = x => x.vis === 'public' || friendOk(x.user_id);
@@ -93,7 +93,7 @@ window.HFMockApi = (() => {
         return { user: { ...x, summary: st.fr[id] === 'friends' ? (SUM[id] || null) : null, state: id === 1 ? 'self' : st.fr[id] || 'none', postsCount: st.posts.filter(q => q.user_id === id).length, friendsCount: id === 1 ? users.filter(y => st.fr[y.id] === 'friends').length : 3 + id }, posts, visible }; }
       if (p === '/api/feed') { const all = u.searchParams.get('scope') === 'all';
         return { posts: st.posts.filter(x => all ? vis(x) : friendOk(x.user_id)).sort((a, b) => b.created - a.created).map(shapeP) }; }
-      if (p === '/api/posts' && M === 'POST') { const x = { id: ++st.id, user_id: 1, media: st.media[body.media], caption: body.caption || '', meta: body.meta || {}, created: Date.now(), likers: new Set(), likesBase: 0, vis: body.vis === 'friends' ? 'friends' : 'public' }; st.posts.push(x); return { post: shapeP(x) }; }
+      if (p === '/api/posts' && M === 'POST') { const x = { id: ++st.id, user_id: 1, media: st.media[body.media], gallery: body.gallery?.length ? [st.media[body.media], ...body.gallery.map(g => st.media[g])] : [], caption: body.caption || '', meta: body.meta || {}, created: Date.now(), likers: new Set(), likesBase: 0, vis: body.vis === 'friends' ? 'friends' : 'public' }; st.posts.push(x); return { post: shapeP(x) }; }
       const pm = /^\/api\/posts\/(\d+)(\/like|\/comments)?$/.exec(p);
       if (pm) { const x = st.posts.find(q => q.id === +pm[1]); if (!x || !vis(x)) throw new Error('Публикация не найдена');
         if (!pm[2] && M === 'GET') return { post: shapeP(x), comments: st.comments.filter(c => c.post_id === x.id).sort((a, b) => a.created - b.created).map(shapeC) };
