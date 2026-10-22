@@ -1169,3 +1169,19 @@ img { display: block; max-width: 100%; }
 .switch:checked::after { transform: translateX(20px); }
 .switch:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
 .share-sum { cursor: pointer; }
+
+/* ===== v22: ответ свайпом по всей строке, зум, аватарки ===== */
+/* строка сообщения — на всю ширину ленты: свайп-ответ работает и рядом с пузырём */
+.msgs { gap: 0; }
+.msg { width: 100%; max-width: none; align-self: stretch; padding: 3px 0; }
+.msg > .bubble, .msg > .circle-msg { max-width: 82%; min-width: 0; }
+.msg-swipe { right: 4px; }
+/* без зума: двойной тап и щипок не увеличивают приложение */
+html { touch-action: manipulation; }
+/* кнопки-аватарки: у <button> в Safari свой внутренний отступ — из-за него аватарка съезжала влево от кольца */
+.friend, .share-friend, .avatar-btn, .chat-top button, .fc-author, .cmt-ava, .uv-ava { padding: 0; }
+.friend { width: 76px; }
+.friend .friend-ava { margin: 0 auto; }
+.friend.has-prog::before { left: 50%; margin-left: -36px; }
+/* iOS увеличивает экран при фокусе на поле с шрифтом меньше 16px */
+input, textarea, select { font-size: max(16px, 1em); }

@@ -238,6 +238,8 @@
     if (el === sheet) abortAnalysis();
     back?.focus?.();
   }
+  // закрыть все окна, кроме разбора блюда и камеры (их состояние жалко терять)
+  function closeOverlays() { for (const { el } of [...stack].reverse()) if (el !== sheet && el !== camEl) closeDialog(el); }
   document.querySelectorAll('.sheet-wrap').forEach(w => w.addEventListener('click', e => { if (e.target.closest('[data-close]')) closeDialog(w); }));
   document.addEventListener('keydown', e => {
     const top = stack[stack.length - 1]; if (!top) return;
@@ -904,25 +906,61 @@
     while (tabTrail.length) { const prev = tabTrail.pop(); if (prev !== tab) { showTab(prev, true); return true; } }
     return false;
   }
-  // Safari: системный свайп «назад» ловим через одну «пустую» запись истории и возвращаем её на место
-  // запись добавляем после первого касания: браузеры пропускают «назад» по записям, созданным без действия человека
-  addEventListener('pointerdown', () => { try { history.pushState({ hf: 1 }, ''); } catch {} }, { once: true, capture: true });
+  const canBack = () => stack.length > 0 || tabTrail.some(t => t !== tab);
+  // Safari: системный свайп «назад» ловим через одну «пустую» запись истории.
+  // Запись ставим только когда есть куда возвращаться и не прямо в popstate: Safari в это время
+  // доигрывает анимацию жеста, и экран «залипал» на секунду-две.
+  let armed = false;
+  const arm = () => { if (!armed && canBack()) { try { history.pushState({ hf: 1 }, ''); armed = true; } catch {} } };
+  for (const ev of ['click', 'touchend']) addEventListener(ev, () => { if (!armed) setTimeout(arm, 0); }, { capture: true, passive: true });
   window.addEventListener('popstate', () => {
-    if (goBack()) { try { history.pushState({ hf: 1 }, ''); } catch {} }
-    else history.back();   // уже на главном экране — даём уйти со страницы как обычно
+    armed = false;
+    if (!goBack()) { history.back(); return; }   // уже на главном экране — даём уйти со страницы как обычно
+    setTimeout(arm, 450);   // есть куда ещё возвращаться — новую запись ставим после анимации жеста
   });
-  // Приложение с экрана «Домой» системного жеста не имеет — свой свайп от левого края
+
+  /* ---------- свайп вправо с любого места = «назад» ----------
+     Окно на весь экран (чат, профиль) едет за пальцем; у шторок и вкладок — стрелка слева.
+     В браузере от самого края не перехватываем: там работает системный жест Safari. */
   const standaloneApp = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-  if (standaloneApp) {
-    let ex = null, ey = 0, edx = 0;
+  {
     const hint = document.createElement('div'); hint.className = 'edge-back'; hint.innerHTML = '<svg><use href="#i-back"/></svg>'; document.body.appendChild(hint);
-    addEventListener('touchstart', e => { const t = e.touches[0]; ex = t.clientX <= 22 ? t.clientX : null; ey = t.clientY; edx = 0; }, { passive: true });
-    addEventListener('touchmove', e => {
-      if (ex == null) return; const t = e.touches[0]; edx = t.clientX - ex;
-      if (Math.abs(t.clientY - ey) > Math.max(30, edx)) { ex = null; hint.style.cssText = ''; return; }
-      const k = Math.min(1, edx / 90); hint.style.cssText = `opacity:${k};transform:translate(${Math.min(edx, 90) * 0.5}px,-50%) scale(${0.6 + 0.4 * k})`; hint.classList.toggle('on', edx > 80);
+    const SKIP = 'input, textarea, select, [contenteditable], video, audio, .friend-row, .share-row, .chips, .composer, .cam, .stepper, .rec-bar, [data-noswipe]';
+    const hScroll = el => { for (; el && el !== document.body; el = el.parentElement) if (el.scrollWidth > el.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return true; return false; };
+    let g = null;
+    const reset = () => { hint.style.cssText = ''; hint.classList.remove('on'); };
+    addEventListener('touchstart', e => {
+      g = null; if (e.touches.length > 1) return;
+      const t = e.touches[0], tg = e.target;
+      if (!standaloneApp && t.clientX < 24) return;
+      if (!canBack() || tg.closest?.(SKIP) || hScroll(tg)) return;
+      const top = stack[stack.length - 1]?.el;
+      g = { x: t.clientX, y: t.clientY, t: performance.now(), dx: 0, lock: 0, el: top && top.matches('.chat, .uview') ? top : null };
     }, { passive: true });
-    addEventListener('touchend', () => { if (ex != null && edx > 80) goBack(); ex = null; hint.style.cssText = ''; hint.classList.remove('on'); });
+    addEventListener('touchmove', e => {
+      if (!g) return; const t = e.touches[0], dx = t.clientX - g.x, dy = t.clientY - g.y;
+      if (!g.lock) {
+        if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+        if (dx <= 0 || Math.abs(dy) > Math.abs(dx) * 0.8) { g = null; return; }   // влево или вертикально — не наше
+        g.lock = 1; if (g.el) g.el.style.transition = 'none';
+      }
+      if (e.cancelable) e.preventDefault();
+      g.dx = Math.max(0, dx);
+      if (g.el) { g.el.style.transform = `translate3d(${g.dx}px,0,0)`; g.el.style.boxShadow = '-8px 0 24px oklch(0% 0 0 / 0.12)'; }
+      const k = Math.min(1, g.dx / 90); hint.style.cssText = `opacity:${k};transform:translate(${Math.min(g.dx, 90) * 0.5}px,-50%) scale(${0.6 + 0.4 * k})`; hint.classList.toggle('on', g.dx > 80);
+    }, { passive: false });
+    const end = () => {
+      if (!g) return; const { el, dx, lock } = g, v = dx / Math.max(1, performance.now() - g.t); g = null; reset();
+      if (!lock) return;
+      const go = dx > 90 || (v > 0.5 && dx > 40);
+      if (!el) { if (go) goBack(); return; }
+      el.style.transition = 'transform 200ms cubic-bezier(.2,.8,.2,1)';
+      if (go) {
+        el.style.transform = 'translate3d(100%,0,0)';
+        setTimeout(() => { goBack(); el.style.transform = el.style.transition = el.style.boxShadow = ''; }, 190);
+      } else { el.style.transform = ''; setTimeout(() => { el.style.transition = el.style.boxShadow = ''; }, 210); }
+    };
+    addEventListener('touchend', end); addEventListener('touchcancel', end);
   }
 
   /* ---------- шторки: «ручка» сверху и закрытие взмахом вниз ---------- */
@@ -958,6 +996,9 @@
     });
   });
 
+  // Safari в браузере игнорирует user-scalable=no — гасим жест «щипок» сами
+  for (const ev of ['gesturestart', 'gesturechange']) document.addEventListener(ev, e => e.preventDefault(), { passive: false });
+
   /* ---------- клавиатура на телефоне ----------
      iOS не сжимает экран под клавиатуру для закреплённых окон — поле ввода оказывается под ней.
      Берём видимую область (visualViewport) и подгоняем под неё чат и нижние панели. */
@@ -967,7 +1008,10 @@
     const root = document.documentElement, kb = Math.max(0, Math.round(innerHeight - vv.height - vv.offsetTop));
     root.style.setProperty('--vvh', `${Math.round(vv.height)}px`);
     root.style.setProperty('--vvt', `${Math.round(vv.offsetTop)}px`);
-    const open = kb > 80; root.classList.toggle('kb-open', open);
+    // клавиатура бывает только при фокусе в поле: после возврата из другого приложения iOS отдаёт
+    // «старые» размеры, и без этой проверки нижнее меню оставалось спрятанным
+    const a0 = document.activeElement, typing = a0 && (/^(INPUT|TEXTAREA|SELECT)$/.test(a0.tagName) || a0.isContentEditable);
+    const open = kb > 80 && typing; root.classList.toggle('kb-open', open);
     if (open) {
       // поле, в котором печатают, держим в поле зрения; ленту чата — у последнего сообщения
       const a = document.activeElement;
@@ -976,10 +1020,19 @@
     }
   }
   if (vv) { vv.addEventListener('resize', syncViewport); vv.addEventListener('scroll', syncViewport); syncViewport(); }
+  // возврат в приложение: пересчитываем размеры, снимаем «залипшую» клавиатуру и прокрутку страницы
+  const resume = () => {
+    syncViewport(); setTimeout(syncViewport, 350);
+    // WebKit иногда не перерисовывает закреплённое меню после возврата из другого приложения — перерисуем сами
+    const tb = document.querySelector('.tabbar'); if (tb) { tb.style.display = 'none'; void tb.offsetHeight; tb.style.display = ''; }
+  };
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) resume(); });
+  addEventListener('pageshow', resume); addEventListener('focus', resume);
+  document.addEventListener('focusout', () => setTimeout(syncViewport, 120));
   // фокус в поле внутри окна — iOS любит прокрутить саму страницу; возвращаем её на место
   document.addEventListener('focusin', e => { if (e.target.closest?.('.chat, .sheet-wrap, .uview')) setTimeout(() => { if (scrollY && stack.length) scrollTo(0, 0); syncViewport(); }, 60); });
 
-  window.HF = { goBack, get draft() { return draft; }, mealTitle: () => $('#mealName').textContent, setInert, get db() { return db; }, set db(v) { db = v; }, validDb, mergeDb, save, day, mealTotals, openDialog, closeDialog, toast, render, streakInfo, keyOf, today, showTab, loadImage, paintAvatar, actKcal };
+  window.HF = { goBack, closeOverlays, get draft() { return draft; }, mealTitle: () => $('#mealName').textContent, setInert, get db() { return db; }, set db(v) { db = v; }, validDb, mergeDb, save, day, mealTotals, openDialog, closeDialog, toast, render, streakInfo, keyOf, today, showTab, loadImage, paintAvatar, actKcal };
 
   /* ---------- day rollover ---------- */
   function rollDay() {

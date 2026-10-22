@@ -409,7 +409,9 @@
     clearInterval(chatPoll); chatPoll = setInterval(() => { if (!document.hidden) loadMsgs(); }, 3000);
   }
   function closeChat() { setReplyMsg(null); clearInterval(chatPoll); if (R) recFinish(false); HF.closeDialog(chatEl); peer = null; refreshSocial(); }
-  $('#chatBack').onclick = closeChat; chatEl._back = closeChat;
+  // «Назад» из чата (кнопка, свайп, жест Safari) — всегда на вкладку «Чаты», а не в окно, из которого пришли
+  function leaveChat() { closeChat(); HF.closeOverlays(); if (!document.querySelector('#tab-chats:not([hidden])')) HF.showTab('chats'); }
+  $('#chatBack').onclick = leaveChat; chatEl._back = leaveChat;
   async function loadMsgs() {
     if (!peer) return;
     try {
@@ -849,8 +851,11 @@
     const ios = isIOS, chromeIOS = /CriOS|FxiOS|EdgiOS/.test(navigator.userAgent);
     const step = (ico, html) => `<li><span class="inst-ico"><svg aria-hidden="true"><use href="#${ico}"/></svg></span><span>${html}</span></li>`;
     $('#installSteps').innerHTML = ios
-      ? step('i-ios-share', chromeIOS ? 'Нажмите <b>«Поделиться»</b> в адресной строке' : 'Нажмите <b>«Поделиться»</b> в панели Safari — внизу или вверху экрана')
-        + step('i-add-square', 'Пролистайте вниз и выберите <b>«На экран „Домой“»</b>')
+      ? (chromeIOS
+        ? step('i-ios-share', 'Нажмите <b>«Поделиться»</b> в адресной строке, справа вверху')
+        : step('i-dots-h', 'Нажмите <b>«•••»</b> в адресной строке Safari, справа внизу. Если её нет — сразу кнопку <b>«Поделиться»</b>')
+          + step('i-ios-share', 'Выберите <b>«Поделиться»</b>'))
+        + step('i-add-square', 'Пролистайте вниз и нажмите <b>«На экран „Домой“»</b>')
         + step('i-check', 'Нажмите <b>«Добавить»</b> — иконка появится рядом с другими приложениями')
       : installEvt ? step('i-check', 'Нажмите <b>«Установить»</b> ниже и подтвердите')
       : step('i-dots-v', 'Откройте меню браузера — три точки справа вверху')
