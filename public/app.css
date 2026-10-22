@@ -1459,3 +1459,76 @@ input, textarea, select { font-size: max(16px, 1em); }
 .ts-status { margin: 0; font-weight: 700; color: var(--color-ink-2); text-align: center; min-height: 1.4em; }
 .is-voice .ts-input { min-height: 72px; }
 @media (prefers-reduced-motion: reduce) { .fab-opt, .fo-ico, .fo-lbl { transition: none; } .ts-orb.on .ts-ring, .refine-mic.on, .ts-mic.on { animation: none; } }
+
+/* ===== v26: капля «Голосом» у камеры, экран голосового ввода, вода без «квадратов» ===== */
+/* вода: уровень двигают SVG-атрибуты; CSS-масштаб и «подсветка» плитки не нужны */
+.glass .g-water, .glass.full .g-water, .glass.pour .g-water, .glass.drain .g-water { transform: none !important; animation: none !important; transition: none !important; }
+.glass .g-wave { opacity: 0; transition: none; }
+.glass.full .g-wave, .glass.pour .g-wave, .glass.drain .g-wave { opacity: 1; animation: none !important; }
+.glass.pour .g-shine { animation: none; }
+.glass, .glass:hover, .glass:active { background: transparent; }
+.glass:active { transform: scale(0.94); }
+.glass.pour { animation: none; }
+@media (hover: hover) { .glass:hover .g-out { stroke: var(--color-water); } }
+.glass:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; border-radius: 10px; }
+
+/* капля из кнопки камеры */
+.fab-goo { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 22px); width: 120px; height: 220px; margin-left: -60px; z-index: 6; pointer-events: none; filter: url(#goo); }
+.goo-base, .goo-drop { position: absolute; left: 50%; bottom: 0; width: 68px; height: 68px; margin-left: -34px; border-radius: 50%; background: var(--color-ink); }
+.goo-drop { width: 62px; height: 62px; margin-left: -31px; bottom: 3px; transform: translateY(0) scale(0.6); transition: transform 520ms cubic-bezier(.3,1.35,.45,1); }
+.fab-goo.open .goo-drop { transform: translateY(-112px) scale(1); }
+.fab-goo:not(.open) .goo-drop { transition-duration: 260ms; transition-timing-function: cubic-bezier(.5,0,.75,0); }
+.fab-voice { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 25px + 112px); width: 62px; height: 62px; margin-left: -31px; z-index: 8; border: 0; padding: 0; background: none;
+  opacity: 0; transform: scale(0.6); pointer-events: none; transition: opacity 160ms var(--ease-out), transform 260ms var(--ease-out); }
+.fab-voice.open { opacity: 1; transform: scale(1); pointer-events: auto; transition-delay: 220ms, 0ms; }
+.fv-ico { width: 62px; height: 62px; border-radius: 50%; display: grid; place-items: center; background: var(--color-yolk); color: var(--color-yolk-ink);
+  box-shadow: inset 0 -6px 12px color-mix(in oklch, var(--color-yolk-ink) 18%, transparent), 0 8px 22px oklch(0% 0 0 / 0.2); transition: transform 160ms var(--ease-out); }
+.fv-ico svg { width: 26px; height: 26px; }
+.fv-lbl { position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); padding: 3px 10px; border-radius: 999px; background: var(--color-ink); color: var(--color-on-ink); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.fab-voice.hot .fv-ico { transform: scale(1.16); }
+.fab.radial-on { transform: scale(0.94); box-shadow: var(--shadow-fab); }
+.fab-goo::after { content: none; }
+@media (prefers-reduced-motion: reduce) { .goo-drop, .fab-voice { transition-duration: 0ms !important; } }
+
+/* голосовой ввод */
+.voice-sheet .vs-body { display: grid; gap: var(--space-sm); padding-bottom: var(--space-sm); }
+.vs-stage { display: grid; justify-items: center; gap: 4px; padding: var(--space-sm) 0 var(--space-xs); }
+.vs-wave { display: flex; align-items: center; justify-content: center; gap: 4px; height: 64px; width: min(100%, 300px); }
+.vs-wave i { flex: 1 1 0; max-width: 6px; height: 6px; border-radius: 3px; background: var(--color-rule-strong); transition: height 200ms var(--ease-out), background-color 200ms var(--ease-out); }
+.listening .vs-wave i { background: var(--color-danger); animation: vsbar var(--t) ease-in-out infinite alternate; }
+.listening.speaking .vs-wave i { animation-duration: calc(var(--t) * 0.55); }
+@keyframes vsbar { from { height: 8px; } to { height: calc(10px + var(--k) * 46px); } }
+.vs-time { margin: 0; font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; color: var(--color-muted); }
+.listening .vs-time { color: var(--color-ink); }
+.vs-status { margin: 0; font-size: var(--text-sm); font-weight: 600; color: var(--color-muted); text-align: center; min-height: 1.4em; }
+.vs-input { width: 100%; min-height: 84px; resize: none; padding: 14px 16px; border-radius: 20px; border: 1.5px solid var(--color-rule); background: var(--color-paper-2); font: inherit; font-size: 17px; line-height: 1.45; color: var(--color-ink); transition: border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out); }
+.vs-input:focus { outline: none; border-color: var(--color-ink); background: var(--color-card); }
+.vs-hint { margin: 0; font-size: var(--text-sm); color: var(--color-muted); }
+.vs-hint[hidden] { display: none; }
+.vs-controls { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: var(--space-sm); padding: var(--space-sm) var(--space-lg) calc(env(safe-area-inset-bottom, 0px) + var(--space-md)); border-top: 1px solid var(--color-rule); background: var(--color-paper); }
+.vs-side { justify-self: start; display: grid; justify-items: center; gap: 3px; min-width: 72px; min-height: 56px; border: 0; background: none; color: var(--color-ink-2); font-size: 12px; font-weight: 700; }
+.vs-side svg { width: 22px; height: 22px; }
+.vs-side:disabled { opacity: 0.35; }
+.vs-go { justify-self: end; color: var(--color-ink); }
+.vs-go:not(:disabled) svg { color: var(--color-ok); }
+.vs-main { position: relative; width: 76px; height: 76px; border-radius: 50%; border: 0; display: grid; place-items: center; background: var(--color-ink); color: var(--color-on-ink); transition: background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); }
+.vs-main svg { position: relative; width: 30px; height: 30px; }
+.vs-main:active { transform: scale(0.94); }
+.vs-main:focus-visible, .vs-side:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 3px; }
+.listening .vs-main { background: var(--color-danger); color: oklch(100% 0 0); }
+.vs-ring { position: absolute; inset: 0; border-radius: 50%; background: var(--color-danger); opacity: 0; pointer-events: none; }
+.listening .vs-ring { animation: orb 1.8s ease-out infinite; }
+.listening .vs-ring.r2 { animation-delay: 0.9s; }
+@media (prefers-reduced-motion: reduce) { .listening .vs-wave i, .listening .vs-ring { animation: none; } .listening .vs-wave i { height: calc(10px + var(--k) * 24px); } }
+.goo-drop { background: var(--color-yolk); }
+.glass { -webkit-tap-highlight-color: transparent; }
+.vs-main:focus-visible { outline: none; }
+/* капля: сначала тянется из кнопки, потом отрывается и «встаёт» на место */
+.fab-goo.open .goo-drop { animation: yolk 640ms cubic-bezier(.3,.9,.4,1) both; transition: none; }
+@keyframes yolk {
+  0% { transform: translateY(0) scale(0.6, 0.6); }
+  35% { transform: translateY(-46px) scale(0.78, 1.12); }
+  60% { transform: translateY(-104px) scale(1.06, 0.94); }
+  80% { transform: translateY(-116px) scale(0.97, 1.03); }
+  100% { transform: translateY(-112px) scale(1); }
+}

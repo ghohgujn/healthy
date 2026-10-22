@@ -152,10 +152,20 @@
   }
 
   const GLASS = 'M3 3h22l-2.6 30.2a3 3 0 0 1-3 2.8H8.6a3 3 0 0 1-3-2.8z';
-  function glassSvg(i) {
+  // Вода — SVG-атрибутами (SMIL): уровень и «плеск» поверхности остаются строго внутри стакана в любом браузере.
+  // mode: 'full' | 'empty' | 'pour' (наливается) | 'drain' (выливается)
+  const WAVE_A = 'M0 13q3.5-3 7 0t7 0 7 0 7 0v3H0z', WAVE_B = 'M0 13q3.5 3 7 0t7 0 7 0 7 0v3H0z', WAVE_F = 'M0 13q3.5-1 7 0t7 0 7 0 7 0v3H0z';
+  function glassSvg(i, mode = 'empty', delay = 0) {
+    const up = mode === 'full' || mode === 'drain', D = mode === 'pour' ? 1.6 : 0.8, sp = 'calcMode="spline" keyTimes="0;1" keySplines=".35 0 .25 1"';
+    const lvl = mode === 'pour' ? `<animate attributeName="y" values="38;12" dur="${D}s" begin="indefinite" fill="freeze" ${sp} data-d="${delay}"/><animate attributeName="height" values="0;26" dur="${D}s" begin="indefinite" fill="freeze" ${sp} data-d="${delay}"/>`
+      : mode === 'drain' ? `<animate attributeName="y" values="12;38" dur="${D}s" begin="indefinite" fill="freeze" ${sp}/><animate attributeName="height" values="26;0" dur="${D}s" begin="indefinite" fill="freeze" ${sp}/>` : '';
+    const surf = mode === 'pour' ? `<animateTransform attributeName="transform" type="translate" values="0 26;0 0" dur="${D}s" begin="indefinite" fill="freeze" ${sp} data-d="${delay}"/>
+        <animate attributeName="d" values="${WAVE_A};${WAVE_B};${WAVE_A};${WAVE_B};${WAVE_F}" dur="${D + 0.6}s" begin="indefinite" fill="freeze" data-d="${delay}"/>`
+      : mode === 'drain' ? `<animateTransform attributeName="transform" type="translate" values="0 0;0 26" dur="${D}s" begin="indefinite" fill="freeze" ${sp}/>` : '';
+    const y0 = up ? 12 : 38, h0 = up ? 26 : 0, t0 = up ? '0 0' : '0 26';
     return `<svg viewBox="0 0 28 38" aria-hidden="true"><defs><clipPath id="gc${i}"><path d="${GLASS}"/></clipPath></defs>
       <path class="g-body" d="${GLASS}"/>
-      <g clip-path="url(#gc${i})"><rect class="g-water" x="0" y="12" width="28" height="26"/><path class="g-wave" d="M0 13q3.5-3 7 0t7 0 7 0 7 0v3H0z"/></g>
+      <g clip-path="url(#gc${i})"><rect class="g-water" x="0" y="${y0}" width="28" height="${h0}">${lvl}</rect><path class="g-wave" d="${up ? WAVE_F : WAVE_A}" transform="translate(${t0})">${surf}</path></g>
       <path class="g-shine" d="M8.2 10l1.3 17"/><path class="g-plus" d="M14 17v8M10 21h8"/><path class="g-out" d="${GLASS}"/></svg>`;
   }
   let waterPrev = null;   // что было нарисовано в прошлый раз — чтобы налить/вылить только изменившиеся стаканы
@@ -171,9 +181,9 @@
     for (let i = 0; i < count; i++) {
       const b = document.createElement('button');
       const full = i < shown;
-      b.className = 'glass' + (full ? ' full' : i === shown ? ' next' : '') + (full && i >= prev ? ' pour' : !full && i < prev ? ' drain' : '') + (full && i === shown - 1 ? ' top' : '');
-      if (full && i >= prev) b.style.setProperty('--d', `${(i - prev) * 220}ms`);
-      b.innerHTML = glassSvg(i) + (i === count - 1 && filled > count ? `<span class="glass-extra">+${filled - count}</span>` : '');
+      const mode = full && i >= prev ? 'pour' : !full && i < prev ? 'drain' : full ? 'full' : 'empty';
+      b.className = 'glass' + (full ? ' full' : i === shown ? ' next' : '') + (mode === 'pour' ? ' pour' : mode === 'drain' ? ' drain' : '');
+      b.innerHTML = glassSvg(i, mode, (i - prev) * 0.28) + (i === count - 1 && filled > count ? `<span class="glass-extra">+${filled - count}</span>` : '');
       b.setAttribute('aria-label', full ? (i === shown - 1 ? `Убрать стакан, выпито ${filled}` : `Оставить ${i + 1} стакан(а)`) : `Выпито ${i + 1} стакан(а)`);
       b.onclick = () => {
         if (full && (i === shown - 1 || filled > count)) setWater(ml - s.glass); // last full glass, or over goal → minus one
@@ -182,6 +192,8 @@
       };
       box.appendChild(b);
     }
+    // анимации SVG запускаем вручную: иначе вставленные позже они считаются «уже прошедшими»
+    box.querySelectorAll('animate, animateTransform').forEach(a => { try { a.beginElementAt(+(a.getAttribute('data-d') || 0)); } catch {} });
   }
   function setWater(ml) {
     const prev = day(selected).water;
@@ -983,66 +995,90 @@
   const micState = btn => on => { btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', String(on)); };
   $('#captionMic').onclick = () => dictate($('#caption'), { onState: on => { micState($('#captionMic'))(on); if (!on && $('#caption').value.trim()) $('#reanalyze').classList.add('ready'); } });
 
-  /* ---------- еда текстом или голосом ---------- */
-  const textSheet = $('#textSheet'), tsIn = $('#tsInput');
-  let tsSource = 'text';
-  const tsUpd = () => { $('#tsGo').disabled = tsIn.value.trim().length < 2; tsIn.style.height = 'auto'; tsIn.style.height = Math.min(220, tsIn.scrollHeight) + 'px'; };
-  tsIn.addEventListener('input', tsUpd);
-  function openTextEntry(mode = 'text', text = '') {
-    tsSource = mode; tsIn.value = text; tsUpd();
-    const voice = mode === 'voice';
-    $('#tsTitle').textContent = voice ? 'Расскажите, что съели' : 'Что вы съели?';
-    $('#tsVoice').hidden = !voice; textSheet.classList.toggle('is-voice', voice);
-    openDialog(textSheet, voice ? '#tsOrb' : '#tsInput');
-    if (voice) setTimeout(() => startVoice(), 250);
+  /* ---------- еда голосом ----------
+     Состояния: «слушаю» (красная кнопка-стоп, бегущая волна, таймер) и «пауза» (микрофон, текст можно править).
+     Остановить можно в любой момент: интерфейс переключается сразу, не дожидаясь ответа распознавания. */
+  const voiceSheet = $('#voiceSheet'), vsIn = $('#vsInput'), vsWave = $('#vsWave');
+  vsWave.innerHTML = Array.from({ length: 28 }, (_, i) => `<i style="--k:${(Math.sin(i * 1.7) + 1.4) / 2.4};--t:${640 + (i * 97) % 420}ms"></i>`).join('');
+  const V = { rec: null, on: false, t0: 0, timer: null, kill: null, src: 'voice' };
+  const vsUpd = () => { const has = vsIn.value.trim().length > 1; $('#vsGo').disabled = !has; $('#vsClear').disabled = !vsIn.value; $('#vsHint').hidden = has || V.on;
+    vsIn.style.height = 'auto'; vsIn.style.height = Math.min(200, Math.max(84, vsIn.scrollHeight)) + 'px'; };
+  vsIn.addEventListener('input', vsUpd);
+  function vsState(on, status) {
+    V.on = on; voiceSheet.classList.toggle('listening', on);
+    const main = $('#vsMain'); main.querySelector('use').setAttribute('href', on ? '#i-stop' : '#i-mic');
+    main.setAttribute('aria-label', on ? 'Остановить запись' : vsIn.value.trim() ? 'Продолжить говорить' : 'Говорить');
+    $('#vsStatus').textContent = status || (on ? 'Слушаю… нажмите, чтобы остановить' : vsIn.value.trim() ? 'Проверьте текст и нажмите «Посчитать»' : 'Нажмите на микрофон и говорите');
+    clearInterval(V.timer);
+    if (on) { V.t0 = Date.now(); $('#vsTime').textContent = '0:00';
+      V.timer = setInterval(() => { const s = (Date.now() - V.t0) / 1000; $('#vsTime').textContent = `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`; if (s > 90) vsStop(); }, 250); }
+    vsUpd();
   }
-  function startVoice() {
-    if (!SR) { $('#tsVoice').hidden = true; textSheet.classList.remove('is-voice'); tsIn.focus(); $('#tsStatus').textContent = ''; toast('Голосовой ввод: нажмите 🎤 на клавиатуре телефона'); return; }
-    dictate(tsIn, { onState: on => {
-      $('#tsOrb').classList.toggle('on', on); micState($('#tsMic'))(on);
-      $('#tsStatus').textContent = on ? 'Говорите — я записываю' : tsIn.value.trim() ? 'Готово. Проверьте текст и нажмите «Посчитать»' : 'Нажмите на микрофон и говорите';
-      $('#tsOrb').setAttribute('aria-label', on ? 'Слушаю — нажмите, чтобы остановить' : 'Нажмите и говорите');
-    } });
+  function vsStart() {
+    if (!SR) { vsState(false, 'В этом браузере нет распознавания речи — нажмите 🎤 на клавиатуре и надиктуйте'); vsIn.focus(); return; }
+    if (V.rec) return;
+    const r = V.rec = new SR(); r.lang = 'ru-RU'; r.interimResults = true; r.continuous = true;
+    const base = vsIn.value.trim(); let fin = '';
+    r.onresult = e => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) { const t = e.results[i][0].transcript; if (e.results[i].isFinal) fin += t; else interim += t; }
+      vsIn.value = [base, (fin + interim).trim()].filter(Boolean).join(base ? ', ' : ''); vsUpd();
+      voiceSheet.classList.remove('speaking'); void voiceSheet.offsetWidth; voiceSheet.classList.add('speaking');   // волна «вспыхивает» на каждое слово
+    };
+    r.onerror = e => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') vsState(false, 'Нет доступа к микрофону. Разрешите его или надиктуйте кнопкой 🎤 на клавиатуре');
+      else if (e.error === 'no-speech') vsState(false, 'Ничего не услышал — нажмите и говорите ещё раз'); };
+    r.onend = () => { clearTimeout(V.kill); if (V.rec === r) { V.rec = null; if (V.on) vsState(false); } };
+    try { r.start(); vsState(true); try { navigator.vibrate?.(12); } catch {} } catch { V.rec = null; vsState(false, 'Не удалось включить микрофон — попробуйте ещё раз'); }
   }
-  $('#tsOrb').onclick = () => { if (rec) stopDictation(); else startVoice(); };
-  $('#tsMic').onclick = () => { if (tsSource === 'voice') $('#tsOrb').click(); else dictate(tsIn, { onState: micState($('#tsMic')) }); };
-  $('#tsChips').querySelectorAll('button').forEach(b => b.onclick = () => { const v = tsIn.value.trim(); tsIn.value = v ? `${v}, ${b.textContent.toLowerCase()}` : b.textContent; tsUpd(); tsIn.focus(); });
-  tsIn.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !$('#tsGo').disabled) { e.preventDefault(); $('#tsGo').click(); } });
-  $('#tsGo').onclick = () => { stopDictation(); const t = tsIn.value.trim(); if (t.length < 2) return; closeDialog(textSheet); startAnalysis(null, '', t, tsSource); };
-  textSheet.addEventListener('click', e => { if (e.target.closest('[data-close]')) stopDictation(); });
+  function vsStop() {
+    const r = V.rec; vsState(false);   // кнопка реагирует сразу
+    if (!r) return;
+    try { r.stop(); } catch {}
+    clearTimeout(V.kill); V.kill = setTimeout(() => { try { r.abort(); } catch {} if (V.rec === r) V.rec = null; }, 1200);   // iOS иногда «зависает» на stop
+  }
+  function openVoice(text = '', autostart = true) {
+    vsIn.value = text; vsState(false); vsUpd();
+    openDialog(voiceSheet, '#vsMain');
+    if (autostart) setTimeout(vsStart, 280);
+  }
+  const openTextEntry = (mode, text) => openVoice(text, !text);
+  $('#vsMain').onclick = () => V.on ? vsStop() : vsStart();
+  $('#vsClear').onclick = () => { vsIn.value = ''; vsUpd(); if (!V.on) vsState(false); };
+  $('#vsGo').onclick = () => { vsStop(); const t = vsIn.value.trim(); if (t.length < 2) return; closeDialog(voiceSheet); startAnalysis(null, '', t, 'voice'); };
+  vsIn.addEventListener('focus', () => { if (V.on) vsStop(); });   // начал править руками — запись останавливаем
+  voiceSheet.addEventListener('click', e => { if (e.target.closest('[data-close]')) vsStop(); });
+  new MutationObserver(() => { if (voiceSheet.hidden) vsStop(); }).observe(voiceSheet, { attributes: true, attributeFilter: ['hidden'] });
 
-  /* ---------- кнопка камеры: тап — фото, удержание — веер «Текстом / Голосом» ----------
-     Держишь палец, слева и справа выезжают кружки; ведёшь к нужному и отпускаешь. Отпустил на месте — веер остаётся открытым. */
+  /* ---------- кнопка камеры: тап — фото, удержание — капля «Голосом» ----------
+     Из кнопки вверх «вытекает» капля и отрывается, как желток от белка. Ведёшь палец к ней и отпускаешь — запись голосом.
+     Отпустил на месте — капля остаётся, по ней можно просто тапнуть. */
   {
-    const fab = $('#openCamera'), radial = $('#fabRadial'), opts = [...radial.querySelectorAll('.fab-opt')];
-    let hold = null, open = false, hot = null, suppressClick = false;
-    const setHot = el => { if (hot === el) return; hot = el; opts.forEach(o => o.classList.toggle('hot', o === el)); if (el) try { navigator.vibrate?.(8); } catch {} };
-    const show = () => { open = true; radial.classList.add('open'); fab.classList.add('radial-on'); radial.setAttribute('aria-hidden', 'false'); opts.forEach(o => o.tabIndex = 0); try { navigator.vibrate?.(14); } catch {} };
-    const hide = () => { open = false; radial.classList.remove('open'); fab.classList.remove('radial-on'); radial.setAttribute('aria-hidden', 'true'); opts.forEach(o => o.tabIndex = -1); setHot(null); };
-    const pick = mode => { hide(); openTextEntry(mode); };
-    const hit = (x, y) => opts.find(o => { const r = o.querySelector('.fo-ico').getBoundingClientRect(); return Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2)) < 46; }) || null;
+    const fab = $('#openCamera'), goo = $('#fabGoo'), vb = $('#fabVoice');
+    let hold = null, open = false, hot = false, suppressClick = false;
+    const setHot = v => { if (hot === v) return; hot = v; vb.classList.toggle('hot', v); if (v) try { navigator.vibrate?.(8); } catch {} };
+    const show = () => { open = true; goo.classList.add('open'); vb.classList.add('open'); fab.classList.add('radial-on'); vb.tabIndex = 0; vb.setAttribute('aria-hidden', 'false'); try { navigator.vibrate?.(14); } catch {} };
+    const hide = () => { open = false; goo.classList.remove('open'); vb.classList.remove('open'); fab.classList.remove('radial-on'); vb.tabIndex = -1; vb.setAttribute('aria-hidden', 'true'); setHot(false); };
+    const pick = () => { hide(); openVoice(); };
+    const hit = (x, y) => { const r = vb.querySelector('.fv-ico').getBoundingClientRect(); return Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2)) < 52; };
     fab.addEventListener('pointerdown', e => {
-      if (e.button) return;
-      if (open) return;
-      hold = { x: e.clientX, y: e.clientY, t: setTimeout(() => { hold.long = true; show(); }, 300) };
+      if (e.button || open) return;
+      hold = { t: setTimeout(() => { hold.long = true; show(); }, 280) };
       try { fab.setPointerCapture(e.pointerId); } catch {}
     });
     fab.addEventListener('pointermove', e => { if (hold?.long) setHot(hit(e.clientX, e.clientY)); });
-    const end = e => {
+    fab.addEventListener('pointerup', e => {
       if (!hold) return; clearTimeout(hold.t); const h = hold; hold = null;
-      if (!h.long) return;                  // короткий тап — обычный click откроет камеру
+      if (!h.long) return;                       // короткий тап — обычный click откроет камеру
       suppressClick = true; setTimeout(() => { suppressClick = false; }, 400);
-      const target = e && e.type === 'pointerup' ? hit(e.clientX, e.clientY) : null;
-      if (target) pick(target.dataset.mode);   // дотянулся до кружка — сразу открываем
-    };
-    fab.addEventListener('pointerup', end); fab.addEventListener('pointercancel', () => { if (hold) { clearTimeout(hold.t); hold = null; } });
+      if (hit(e.clientX, e.clientY)) pick();
+    });
+    fab.addEventListener('pointercancel', () => { if (hold) { clearTimeout(hold.t); hold = null; } });
     fab.addEventListener('contextmenu', e => e.preventDefault());
     fab.onclick = () => { if (suppressClick) return; if (open) { hide(); return; } openCamera(); };
-    opts.forEach(o => o.onclick = () => pick(o.dataset.mode));
-    document.addEventListener('pointerdown', e => { if (open && !e.target.closest('#fabRadial, #openCamera')) hide(); }, true);
+    vb.onclick = pick;
+    document.addEventListener('pointerdown', e => { if (open && !e.target.closest('#fabVoice, #openCamera')) hide(); }, true);
     document.addEventListener('keydown', e => { if (open && e.key === 'Escape') hide(); });
-    // подсказка о новом жесте — один раз
-    try { if (!localStorage.getItem('hf.fabHint') && db.profile?.configured !== undefined) setTimeout(() => { if (!stack.length && tab === 'today') { toast('Удерживайте камеру — можно записать еду текстом или голосом'); localStorage.setItem('hf.fabHint', '1'); } }, 2500); } catch {}
+    try { if (!localStorage.getItem('hf.fabHint2')) setTimeout(() => { if (!stack.length && tab === 'today') { toast('Удерживайте камеру — можно записать еду голосом'); localStorage.setItem('hf.fabHint2', '1'); } }, 2500); } catch {}
   }
 
   /* ---------- «Назад»: закрыть верхнее окно или вернуться на прошлую вкладку ---------- */

@@ -40,6 +40,7 @@
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs><filter id="goo" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur in="SourceGraphic" stdDeviation="9" result="b"/><feColorMatrix in="b" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 24 -10" result="g"/><feComposite in="SourceGraphic" in2="g" operator="atop"/></filter></defs>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
     <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
@@ -49,6 +50,7 @@
     <symbol id="i-reply" viewBox="0 0 24 24"><path d="M9.5 7 4 12l5.5 5M4.5 12H14a6 6 0 0 1 6 6v1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-ios-share" viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4M7 10H5.5A1.5 1.5 0 0 0 4 11.5v8A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5v-8A1.5 1.5 0 0 0 18.5 10H17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-add-square" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="3" fill="currentColor"/></symbol>
     <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z M13.5 6.5l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path class="lk-shackle" d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-dots-h" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></symbol>
@@ -260,11 +262,10 @@
       <button class="tabbtn" data-tab="profile"><svg><use href="#i-user"/></svg><span>Профиль</span></button>
     </nav>
 
-    <div class="fab-radial" id="fabRadial" aria-hidden="true">
-      <button class="fab-opt" data-mode="text" tabindex="-1"><span class="fo-ico"><svg><use href="#i-pen"/></svg></span><span class="fo-lbl">Текстом</span></button>
-      <button class="fab-opt" data-mode="voice" tabindex="-1"><span class="fo-ico"><svg><use href="#i-mic"/></svg></span><span class="fo-lbl">Голосом</span></button>
-    </div>
-    <button class="fab" id="openCamera" aria-label="Сфотографировать еду. Удерживайте — записать текстом или голосом">
+    <!-- удержание камеры: из кнопки «вытекает» капля «Голосом», как желток отделяется от белка -->
+    <div class="fab-goo" id="fabGoo" aria-hidden="true"><span class="goo-base"></span><span class="goo-drop"></span></div>
+    <button class="fab-voice" id="fabVoice" tabindex="-1" aria-hidden="true"><span class="fv-ico"><svg><use href="#i-mic"/></svg></span><span class="fv-lbl">Голосом</span></button>
+    <button class="fab" id="openCamera" aria-label="Сфотографировать еду. Удерживайте — записать голосом">
       <svg><use href="#i-camera"/></svg>
     </button>
     <input type="file" id="photoInput" accept="image/*" class="sr-only" tabindex="-1" aria-hidden="true">
@@ -366,29 +367,30 @@
     </section>
   </div>
 
-  <!-- Еда текстом или голосом -->
-  <div class="sheet-wrap" id="textSheet" hidden>
+  <!-- Еда голосом -->
+  <div class="sheet-wrap" id="voiceSheet" hidden>
     <div class="scrim" data-close></div>
-    <section class="sheet text-sheet" role="dialog" aria-modal="true" aria-labelledby="tsTitle">
+    <section class="sheet voice-sheet" role="dialog" aria-modal="true" aria-labelledby="vsTitle">
       <div class="sheet-head">
-        <h2 class="h2" id="tsTitle">Что вы съели?</h2>
+        <h2 class="h2" id="vsTitle">Расскажите, что съели</h2>
         <button class="icon-btn" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button>
       </div>
-      <div class="sheet-body">
-        <div class="ts-voice" id="tsVoice" hidden>
-          <button class="ts-orb" id="tsOrb" type="button" aria-label="Слушаю — нажмите, чтобы остановить"><span class="ts-ring"></span><span class="ts-ring r2"></span><svg><use href="#i-mic"/></svg></button>
-          <p class="ts-status" id="tsStatus" role="status">Говорите — я записываю</p>
+      <div class="sheet-body vs-body">
+        <div class="vs-stage" id="vsStage">
+          <div class="vs-wave" id="vsWave" aria-hidden="true"></div>
+          <p class="vs-time" id="vsTime" aria-hidden="true">0:00</p>
+          <p class="vs-status" id="vsStatus" role="status">Нажмите на микрофон и говорите</p>
         </div>
-        <div class="ts-field">
-          <textarea class="ts-input" id="tsInput" rows="3" maxlength="1000" placeholder="Например: омлет из 2 яиц, тост с маслом и капучино" aria-label="Что вы съели"></textarea>
-          <button class="ts-mic" id="tsMic" type="button" aria-label="Надиктовать"><svg><use href="#i-mic"/></svg></button>
+        <div class="vs-text">
+          <textarea class="vs-input" id="vsInput" rows="3" maxlength="1000" placeholder="Здесь появится то, что вы скажете. Текст можно поправить" aria-label="Что вы съели"></textarea>
         </div>
-        <p class="ts-hint">Пишите как другу: блюда, сколько штук или грамм, где ели. Чем точнее — тем точнее калории.</p>
-        <div class="ts-chips" id="tsChips" role="group" aria-label="Примеры">
-          <button type="button">Борщ со сметаной, 2 куска хлеба</button><button type="button">Капучино 300 мл и круассан</button><button type="button">Гречка 200 г с куриной грудкой</button><button type="button">Шаурма в лаваше</button>
-        </div>
+        <p class="vs-hint" id="vsHint">Скажите блюда и примерное количество: «тарелка борща со сметаной, два куска хлеба и чай с сахаром».</p>
       </div>
-      <footer class="sheet-foot"><button class="btn btn-primary" id="tsGo" disabled><svg aria-hidden="true"><use href="#i-spark"/></svg>Посчитать КБЖУ</button></footer>
+      <footer class="vs-controls">
+        <button class="vs-side" id="vsClear" type="button" aria-label="Стереть текст"><svg><use href="#i-trash"/></svg><span>Стереть</span></button>
+        <button class="vs-main" id="vsMain" type="button" aria-label="Говорить"><span class="vs-ring"></span><span class="vs-ring r2"></span><svg><use href="#i-mic"/></svg></button>
+        <button class="vs-side vs-go" id="vsGo" type="button" disabled aria-label="Посчитать КБЖУ"><svg><use href="#i-spark"/></svg><span>Посчитать</span></button>
+      </footer>
     </section>
   </div>
 

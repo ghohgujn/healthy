@@ -47,6 +47,8 @@
   --color-bub-theirs: oklch(100% 0 0);
   --color-bub-meta:  oklch(48% 0.02 155);
   --color-tick-read: oklch(52% 0.15 152);
+  --color-yolk:      oklch(84% 0.16 85);
+  --color-yolk-ink:  oklch(32% 0.08 60);
 
   --font-display: "Onest", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-body:    "Onest", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -107,12 +109,16 @@
   --color-bub-theirs: oklch(23% 0.01 260);
   --color-bub-meta:  oklch(84% 0.04 150);
   --color-tick-read: oklch(86% 0.14 150);
+  --color-yolk:      oklch(82% 0.15 85);
+  --color-yolk-ink:  oklch(28% 0.07 60);
     --color-chat-bg:   oklch(14% 0.008 260);
     --color-bub-mine:  oklch(38% 0.075 156);
     --color-bub-mine-ink: oklch(97% 0.01 150);
     --color-bub-theirs: oklch(23% 0.01 260);
     --color-bub-meta:  oklch(84% 0.04 150);
     --color-tick-read: oklch(86% 0.14 150);
+    --color-yolk:      oklch(82% 0.15 85);
+    --color-yolk-ink:  oklch(28% 0.07 60);
     --color-streak-2: oklch(45% 0.1 50);
     --color-streak-bg: oklch(25% 0.04 50);
     --shadow-card:  0 1px 0 oklch(100% 0 0 / 0.04);
