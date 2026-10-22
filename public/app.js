@@ -196,7 +196,7 @@
   }
 
   let freshMeal = null;   // только что добавленный приём — подсвечиваем в списке
-  const PORTIONS = [[1, 'Всё'], [0.75, '¾'], [0.5, '½'], [0.25, '¼']];   // «Сколько съели»
+  const PORTIONS = [[1, '100%'], [0.75, '75%'], [0.5, '50%'], [0.25, '25%']];   // «Сколько съели»
   function renderMeals() {
     const list = $('#mealList'); list.innerHTML = '';
     const meals = day(selected).meals.slice().sort((a, b) => a.time - b.time);
@@ -208,7 +208,7 @@
       const time = new Date(m.time).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
       b.innerHTML = `${m.thumb ? '<img alt="">' : '<span class="ph"></span>'}
         <span><span class="meal-top"><span class="meal-title"></span><span class="meal-time"></span></span>
-        <span class="meal-kcal">${r0(t.kcal)} ккал${(m.portion || 1) < 1 ? `<span class="meal-portion">${PORTIONS.find(([v]) => Math.abs(v - m.portion) < 0.01)?.[1] || Math.round(m.portion * 100) + '%'} порции</span>` : ''}</span>
+        <span class="meal-kcal">${r0(t.kcal)} ккал${(m.portion || 1) < 1 ? `<span class="meal-portion">съедено ${Math.round(m.portion * 100)}%</span>` : ''}</span>
         <span class="meal-macros"><span style="--c:var(--color-protein)">Б ${r0(t.p)}</span><span style="--c:var(--color-fat)">Ж ${r0(t.f)}</span><span style="--c:var(--color-carb)">У ${r0(t.c)}</span></span></span>`;
       if (m.thumb) b.querySelector('img').src = m.thumb;
       b.querySelector('.meal-title').textContent = m.name;
@@ -328,7 +328,6 @@
   $('#camResume').onclick = () => startStream().catch(() => openCamera());
   function closeCamera() { stopStream(); closeDialog(camEl); }
 
-  $('#openCamera').onclick = openCamera;
   $('#camClose').onclick = closeCamera;
   $('#camGallery').onclick = () => $('#photoInput').click();
   $('#camNative').onclick = () => $('#cameraInput').click();
@@ -380,10 +379,14 @@
   }
   function abortAnalysis() { inflight?.abort(); inflight = null; reqSeq++; }
 
-  function startAnalysis(image, thumb) {
-    draft = { image, thumb, items: [], question: '', options: [], caption: '', editing: false, day: selected };
-    $('#caption').value = ''; $('#refine').open = false; sheetMode(false);
-    $('#mealPhoto').src = thumb;
+  // фото, текст или голос: без фото нейросеть считает по описанию
+  function startAnalysis(image, thumb, text = '', source = 'photo') {
+    draft = { image, thumb, items: [], question: '', options: [], caption: text, editing: false, day: selected, source };
+    $('#caption').value = image ? '' : text; sheetMode(false);
+    if (thumb) $('#mealPhoto').src = thumb; else $('#mealPhoto').removeAttribute('src');
+    $('#photoSrc').querySelector('span').textContent = source === 'voice' ? 'Записано голосом' : 'Записано текстом';
+    $('#photoSrc').querySelector('use').setAttribute('href', source === 'voice' ? '#i-mic' : '#i-pen');
+    $('#retakeBtn').lastChild.textContent = image ? 'Переснять' : 'Изменить описание';
     openDialog(sheet, '#cancelAnalyze');
     analyze();
   }
@@ -404,7 +407,7 @@
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, 45000);
     // этапы ожидания: человек видит, что работа идёт, а не «зависло»
-    const steps = [[0, 'Отправляю фото…'], [1200, 'Смотрю на тарелку…'], [3500, 'Определяю продукты…'], [7000, 'Оцениваю граммы и жирность…'], [12000, 'Почти готово…'], [22000, 'Нейросеть сегодня неторопливая — ещё немного…']];
+    const steps = !d.image ? [[0, 'Читаю описание…'], [1500, 'Подбираю продукты и порции…'], [5000, 'Считаю КБЖУ…'], [12000, 'Почти готово…'], [22000, 'Нейросеть сегодня неторопливая — ещё немного…']] : [[0, 'Отправляю фото…'], [1200, 'Смотрю на тарелку…'], [3500, 'Определяю продукты…'], [7000, 'Оцениваю граммы и жирность…'], [12000, 'Почти готово…'], [22000, 'Нейросеть сегодня неторопливая — ещё немного…']];
     const stepTimers = steps.map(([ms, text]) => setTimeout(() => { if (my === reqSeq) $('#loadingHint').textContent = text; }, ms));
     const slow = { clear: () => stepTimers.forEach(clearTimeout) };
     showState('loading');
@@ -422,7 +425,7 @@
         if (!r.ok) throw new Error(data.error || 'Сервер не ответил. Попробуйте ещё раз.');
       }
       if (my !== reqSeq || d !== draft) return; // stale response
-      if (!data.items || !data.items.length) throw new Error('Не вижу еды на фото. Сфотографируйте тарелку сверху, целиком.');
+      if (!data.items || !data.items.length) throw new Error(d.image ? 'Не вижу еды на фото. Сфотографируйте тарелку сверху, целиком.' : 'Не нашёл еды в описании. Напишите блюда и примерное количество.');
       Object.assign(d, { items: data.items, portion: 1, ai: JSON.parse(JSON.stringify(data.items)), question: data.question || '', options: data.options || [], model: data.model, confidence: data.confidence });
       renderDraft(); showState('result'); $('#saveMeal').focus();
     } catch (err) {
@@ -435,8 +438,19 @@
   }
   $('#cancelAnalyze').onclick = () => closeDialog(sheet);
   $('#retryBtn').onclick = analyze;
-  $('#retakeBtn').onclick = () => { closeDialog(sheet); openCamera(); };
-  $('#reanalyze').onclick = () => { draft.caption = $('#caption').value.trim(); analyze(); };
+  $('#retakeBtn').onclick = () => { const d = draft; closeDialog(sheet); if (d.image) openCamera(); else openTextEntry(d.source, d.caption); };
+  $('#reanalyze').onclick = () => {
+    const v = $('#caption').value.trim();
+    if (!draft.image && !v) { $('#caption').focus(); return; }
+    draft.caption = v; analyze();
+  };
+  // быстрые подсказки дописываются в поле — можно собрать «без масла, порция больше» в два тапа
+  $('#refineChips').querySelectorAll('button').forEach(b => b.onclick = () => {
+    const c = $('#caption'), v = c.value.trim();
+    if (!v.toLowerCase().includes(b.textContent)) c.value = v ? `${v}, ${b.textContent}` : b.textContent;
+    $('#reanalyze').classList.remove('nudge'); void $('#reanalyze').offsetWidth; $('#reanalyze').classList.add('nudge');
+  });
+  $('#caption').addEventListener('input', () => $('#reanalyze').classList.toggle('ready', !!$('#caption').value.trim()));
   $('#caption').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#reanalyze').click(); } });
 
   const FAT_LABEL = { none: 'без масла', light: 'немного масла', heavy: 'много масла' };
@@ -950,6 +964,91 @@
       meals: meals.map(m => { const t = mealTotals(m.items); return { title: m.name, kcal: t.kcal, p: t.p, f: t.f, c: t.c, time: tm(m.time) }; }),
       items: [], totals: dayTotals(selected) });
   };
+  /* ---------- диктовка (Web Speech API) ----------
+     Safari и Chrome распознают русскую речь сами; если браузер не умеет — подсказываем микрофон на клавиатуре. */
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null;
+  function dictate(input, { onState } = {}) {
+    if (rec) { rec.stop(); return; }
+    if (!SR) { input.focus(); toast('Голосовой ввод: нажмите 🎤 на клавиатуре телефона'); return; }
+    const r = rec = new SR(); r.lang = 'ru-RU'; r.interimResults = true; r.continuous = true;
+    const base = input.value.trim(); let finalText = '';
+    r.onresult = e => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) { const t = e.results[i][0].transcript; if (e.results[i].isFinal) finalText += t; else interim += t; }
+      input.value = [base, (finalText + interim).trim()].filter(Boolean).join(base ? ', ' : '');
+      input.dispatchEvent(new Event('input'));
+    };
+    r.onerror = e => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Нет доступа к микрофону. Можно надиктовать кнопкой 🎤 на клавиатуре'); else if (e.error === 'no-speech') toast('Ничего не услышал — попробуйте ещё раз'); };
+    r.onend = () => { if (rec === r) rec = null; onState?.(false); };
+    try { r.start(); onState?.(true); } catch { rec = null; onState?.(false); }
+  }
+  const stopDictation = () => { try { rec?.stop(); } catch {} };
+  const micState = btn => on => { btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', String(on)); };
+  $('#captionMic').onclick = () => dictate($('#caption'), { onState: on => { micState($('#captionMic'))(on); if (!on && $('#caption').value.trim()) $('#reanalyze').classList.add('ready'); } });
+
+  /* ---------- еда текстом или голосом ---------- */
+  const textSheet = $('#textSheet'), tsIn = $('#tsInput');
+  let tsSource = 'text';
+  const tsUpd = () => { $('#tsGo').disabled = tsIn.value.trim().length < 2; tsIn.style.height = 'auto'; tsIn.style.height = Math.min(220, tsIn.scrollHeight) + 'px'; };
+  tsIn.addEventListener('input', tsUpd);
+  function openTextEntry(mode = 'text', text = '') {
+    tsSource = mode; tsIn.value = text; tsUpd();
+    const voice = mode === 'voice';
+    $('#tsTitle').textContent = voice ? 'Расскажите, что съели' : 'Что вы съели?';
+    $('#tsVoice').hidden = !voice; textSheet.classList.toggle('is-voice', voice);
+    openDialog(textSheet, voice ? '#tsOrb' : '#tsInput');
+    if (voice) setTimeout(() => startVoice(), 250);
+  }
+  function startVoice() {
+    if (!SR) { $('#tsVoice').hidden = true; textSheet.classList.remove('is-voice'); tsIn.focus(); $('#tsStatus').textContent = ''; toast('Голосовой ввод: нажмите 🎤 на клавиатуре телефона'); return; }
+    dictate(tsIn, { onState: on => {
+      $('#tsOrb').classList.toggle('on', on); micState($('#tsMic'))(on);
+      $('#tsStatus').textContent = on ? 'Говорите — я записываю' : tsIn.value.trim() ? 'Готово. Проверьте текст и нажмите «Посчитать»' : 'Нажмите на микрофон и говорите';
+      $('#tsOrb').setAttribute('aria-label', on ? 'Слушаю — нажмите, чтобы остановить' : 'Нажмите и говорите');
+    } });
+  }
+  $('#tsOrb').onclick = () => { if (rec) stopDictation(); else startVoice(); };
+  $('#tsMic').onclick = () => { if (tsSource === 'voice') $('#tsOrb').click(); else dictate(tsIn, { onState: micState($('#tsMic')) }); };
+  $('#tsChips').querySelectorAll('button').forEach(b => b.onclick = () => { const v = tsIn.value.trim(); tsIn.value = v ? `${v}, ${b.textContent.toLowerCase()}` : b.textContent; tsUpd(); tsIn.focus(); });
+  tsIn.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !$('#tsGo').disabled) { e.preventDefault(); $('#tsGo').click(); } });
+  $('#tsGo').onclick = () => { stopDictation(); const t = tsIn.value.trim(); if (t.length < 2) return; closeDialog(textSheet); startAnalysis(null, '', t, tsSource); };
+  textSheet.addEventListener('click', e => { if (e.target.closest('[data-close]')) stopDictation(); });
+
+  /* ---------- кнопка камеры: тап — фото, удержание — веер «Текстом / Голосом» ----------
+     Держишь палец, слева и справа выезжают кружки; ведёшь к нужному и отпускаешь. Отпустил на месте — веер остаётся открытым. */
+  {
+    const fab = $('#openCamera'), radial = $('#fabRadial'), opts = [...radial.querySelectorAll('.fab-opt')];
+    let hold = null, open = false, hot = null, suppressClick = false;
+    const setHot = el => { if (hot === el) return; hot = el; opts.forEach(o => o.classList.toggle('hot', o === el)); if (el) try { navigator.vibrate?.(8); } catch {} };
+    const show = () => { open = true; radial.classList.add('open'); fab.classList.add('radial-on'); radial.setAttribute('aria-hidden', 'false'); opts.forEach(o => o.tabIndex = 0); try { navigator.vibrate?.(14); } catch {} };
+    const hide = () => { open = false; radial.classList.remove('open'); fab.classList.remove('radial-on'); radial.setAttribute('aria-hidden', 'true'); opts.forEach(o => o.tabIndex = -1); setHot(null); };
+    const pick = mode => { hide(); openTextEntry(mode); };
+    const hit = (x, y) => opts.find(o => { const r = o.querySelector('.fo-ico').getBoundingClientRect(); return Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2)) < 46; }) || null;
+    fab.addEventListener('pointerdown', e => {
+      if (e.button) return;
+      if (open) return;
+      hold = { x: e.clientX, y: e.clientY, t: setTimeout(() => { hold.long = true; show(); }, 300) };
+      try { fab.setPointerCapture(e.pointerId); } catch {}
+    });
+    fab.addEventListener('pointermove', e => { if (hold?.long) setHot(hit(e.clientX, e.clientY)); });
+    const end = e => {
+      if (!hold) return; clearTimeout(hold.t); const h = hold; hold = null;
+      if (!h.long) return;                  // короткий тап — обычный click откроет камеру
+      suppressClick = true; setTimeout(() => { suppressClick = false; }, 400);
+      const target = e && e.type === 'pointerup' ? hit(e.clientX, e.clientY) : null;
+      if (target) pick(target.dataset.mode);   // дотянулся до кружка — сразу открываем
+    };
+    fab.addEventListener('pointerup', end); fab.addEventListener('pointercancel', () => { if (hold) { clearTimeout(hold.t); hold = null; } });
+    fab.addEventListener('contextmenu', e => e.preventDefault());
+    fab.onclick = () => { if (suppressClick) return; if (open) { hide(); return; } openCamera(); };
+    opts.forEach(o => o.onclick = () => pick(o.dataset.mode));
+    document.addEventListener('pointerdown', e => { if (open && !e.target.closest('#fabRadial, #openCamera')) hide(); }, true);
+    document.addEventListener('keydown', e => { if (open && e.key === 'Escape') hide(); });
+    // подсказка о новом жесте — один раз
+    try { if (!localStorage.getItem('hf.fabHint') && db.profile?.configured !== undefined) setTimeout(() => { if (!stack.length && tab === 'today') { toast('Удерживайте камеру — можно записать еду текстом или голосом'); localStorage.setItem('hf.fabHint', '1'); } }, 2500); } catch {}
+  }
+
   /* ---------- «Назад»: закрыть верхнее окно или вернуться на прошлую вкладку ---------- */
   // У окна может быть свой обработчик (чат останавливает опрос, камера — поток): el._back()
   function goBack() {

@@ -276,6 +276,7 @@ const MODELS = {
   gemini:  { id: 'google/gemini-3.5-flash',     label: 'Gemini 3.5 Flash' },
 };
 const PROMPT = await readFile(fileURLToPath(new URL('./prompt.txt', import.meta.url)), 'utf8');
+const PROMPT_TEXT = await readFile(fileURLToPath(new URL('./prompt-text.txt', import.meta.url)), 'utf8');   // еда словами или голосом — без фото
 const num = v => (Number.isFinite(+v) ? +v : 0);
 const pick = (v, allowed, dflt) => { v = String(v || '').toLowerCase(); return allowed.includes(v) ? v : dflt; };
 function clean(j) {
@@ -300,8 +301,10 @@ const AI_MAX_TOKENS = Number(process.env.AI_MAX_TOKENS || 2500);
 const AI_BASE = (process.env.AI_BASE_URL || 'https://api.proxyapi.ru/v1').replace(/\/$/, '');
 const aiStats = [];   // последние 200 распознаваний: время, размер фото, токены — для админа
 function aiBody(model, caption, image, withReasoning) {
-  const b = { model: model.id, max_completion_tokens: AI_MAX_TOKENS, messages: [{ role: 'user', content: [
-    { type: 'text', text: PROMPT.replace('{caption}', caption) }, { type: 'image_url', image_url: /^openai\//.test(model.id) ? { url: image, detail: 'auto' } : { url: image } }] }] };
+  const content = image
+    ? [{ type: 'text', text: PROMPT.replace('{caption}', caption) }, { type: 'image_url', image_url: /^openai\//.test(model.id) ? { url: image, detail: 'auto' } : { url: image } }]
+    : [{ type: 'text', text: PROMPT_TEXT.replace('{caption}', caption) }];
+  const b = { model: model.id, max_completion_tokens: AI_MAX_TOKENS, messages: [{ role: 'user', content }] };
   if (withReasoning && REASONING !== 'off' && /^openai\//.test(model.id)) b.reasoning_effort = REASONING;
   return JSON.stringify(b);
 }
@@ -319,9 +322,10 @@ async function analyze(req, res) {
   let body;
   body = await json(req, 4_000_000);
   const image = String(body.image || '');
-  if (!/^data:image\/(jpeg|png|webp);base64,/.test(image) || image.length > 3_000_000) throw fail(400, 'Нужна фотография JPEG/PNG до ~2 МБ');
+  const caption = String(body.caption || '').replace(/[<>]/g, '').slice(0, image ? 300 : 1000);
+  if (image && (!/^data:image\/(jpeg|png|webp);base64,/.test(image) || image.length > 3_000_000)) throw fail(400, 'Нужна фотография JPEG/PNG до ~2 МБ');
+  if (!image && caption.trim().length < 2) throw fail(400, 'Опишите, что вы съели');
   const model = MODELS[body.model] || MODELS.fast;
-  const caption = String(body.caption || '').replace(/[<>]/g, '').slice(0, 300);
   const t0 = now(), ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 50_000);
   let r, usedReasoning = REASONING !== 'off' && /^openai\//.test(model.id);   // параметр уходит только моделям OpenAI
   try {

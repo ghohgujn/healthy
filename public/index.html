@@ -30,6 +30,7 @@
     <symbol id="i-reply" viewBox="0 0 24 24"><path d="M9.5 7 4 12l5.5 5M4.5 12H14a6 6 0 0 1 6 6v1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-ios-share" viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4M7 10H5.5A1.5 1.5 0 0 0 4 11.5v8A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5v-8A1.5 1.5 0 0 0 18.5 10H17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-add-square" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z M13.5 6.5l4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path class="lk-shackle" d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-dots-h" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></symbol>
     <symbol id="i-dots-v" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="19" r="1.8" fill="currentColor"/></symbol>
@@ -240,7 +241,11 @@
       <button class="tabbtn" data-tab="profile"><svg><use href="#i-user"/></svg><span>Профиль</span></button>
     </nav>
 
-    <button class="fab" id="openCamera" aria-label="Сфотографировать еду">
+    <div class="fab-radial" id="fabRadial" aria-hidden="true">
+      <button class="fab-opt" data-mode="text" tabindex="-1"><span class="fo-ico"><svg><use href="#i-pen"/></svg></span><span class="fo-lbl">Текстом</span></button>
+      <button class="fab-opt" data-mode="voice" tabindex="-1"><span class="fo-ico"><svg><use href="#i-mic"/></svg></span><span class="fo-lbl">Голосом</span></button>
+    </div>
+    <button class="fab" id="openCamera" aria-label="Сфотографировать еду. Удерживайте — записать текстом или голосом">
       <svg><use href="#i-camera"/></svg>
     </button>
     <input type="file" id="photoInput" accept="image/*" class="sr-only" tabindex="-1" aria-hidden="true">
@@ -277,6 +282,7 @@
     <section class="sheet" role="dialog" aria-modal="true" aria-labelledby="mealName">
       <div class="sheet-photo">
         <img id="mealPhoto" alt="">
+        <span class="photo-src" id="photoSrc"><svg aria-hidden="true"><use href="#i-pen"/></svg><span>Записано текстом</span></span>
         <button class="icon-btn icon-btn-float" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button>
       </div>
       <div class="sheet-body">
@@ -306,6 +312,17 @@
             <div class="total"><i style="--c: var(--color-carb)"></i><b id="tC">0</b><span>углев.</span></div>
           </div>
 
+          <div class="refine" id="refine">
+            <label class="refine-lbl" for="caption"><svg aria-hidden="true"><use href="#i-spark"/></svg>Подсказать нейросети</label>
+            <div class="refine-box">
+              <input class="refine-input" id="caption" maxlength="300" autocomplete="off" enterkeyhint="send" placeholder="2 котлеты, гречка 200 г, без масла">
+              <button class="refine-mic" id="captionMic" type="button" aria-label="Надиктовать"><svg><use href="#i-mic"/></svg></button>
+              <button class="refine-go" id="reanalyze" type="button" aria-label="Пересчитать с подсказкой"><svg><use href="#i-refresh"/></svg></button>
+            </div>
+            <div class="refine-chips" id="refineChips" role="group" aria-label="Быстрые подсказки">
+              <button type="button">без масла</button><button type="button">жарено на масле</button><button type="button">порция больше</button><button type="button">порция меньше</button><button type="button">с соусом</button><button type="button">без хлеба</button>
+            </div>
+          </div>
           <div class="portion" role="radiogroup" aria-labelledby="portionLbl">
             <span class="field-label" id="portionLbl">Сколько съели</span>
             <div class="seg portion-seg" id="portion"></div>
@@ -319,14 +336,6 @@
           <ul class="items" id="items"></ul>
 
           <p class="conf-note" id="confNote" hidden><svg aria-hidden="true"><use href="#i-alert"/></svg>Нейросеть не уверена в составе — проверьте граммы</p>
-          <details class="refine" id="refine">
-            <summary>Уточнить состав или вес</summary>
-            <label class="field-label" for="caption">Например: «2 котлеты и гречка 200 г, без масла»</label>
-            <div class="refine-row">
-              <input class="input" id="caption" maxlength="300" autocomplete="off" placeholder="Что на тарелке?">
-              <button class="btn btn-ghost btn-sm" id="reanalyze">Пересчитать</button>
-            </div>
-          </details>
           <button class="report-link" id="reportMeal" type="button"><svg aria-hidden="true"><use href="#i-alert"/></svg>Посчитано неточно? Сообщить</button>
         </div>
       </div>
@@ -335,6 +344,32 @@
         <button class="btn btn-share" id="shareMeal" aria-label="Поделиться: другу или в профиль"><svg aria-hidden="true"><use href="#i-share"/></svg><span>Поделиться</span></button>
         <button class="btn btn-primary" id="saveMeal">Добавить в дневник</button>
       </footer>
+    </section>
+  </div>
+
+  <!-- Еда текстом или голосом -->
+  <div class="sheet-wrap" id="textSheet" hidden>
+    <div class="scrim" data-close></div>
+    <section class="sheet text-sheet" role="dialog" aria-modal="true" aria-labelledby="tsTitle">
+      <div class="sheet-head">
+        <h2 class="h2" id="tsTitle">Что вы съели?</h2>
+        <button class="icon-btn" data-close aria-label="Закрыть"><svg><use href="#i-x"/></svg></button>
+      </div>
+      <div class="sheet-body">
+        <div class="ts-voice" id="tsVoice" hidden>
+          <button class="ts-orb" id="tsOrb" type="button" aria-label="Слушаю — нажмите, чтобы остановить"><span class="ts-ring"></span><span class="ts-ring r2"></span><svg><use href="#i-mic"/></svg></button>
+          <p class="ts-status" id="tsStatus" role="status">Говорите — я записываю</p>
+        </div>
+        <div class="ts-field">
+          <textarea class="ts-input" id="tsInput" rows="3" maxlength="1000" placeholder="Например: омлет из 2 яиц, тост с маслом и капучино" aria-label="Что вы съели"></textarea>
+          <button class="ts-mic" id="tsMic" type="button" aria-label="Надиктовать"><svg><use href="#i-mic"/></svg></button>
+        </div>
+        <p class="ts-hint">Пишите как другу: блюда, сколько штук или грамм, где ели. Чем точнее — тем точнее калории.</p>
+        <div class="ts-chips" id="tsChips" role="group" aria-label="Примеры">
+          <button type="button">Борщ со сметаной, 2 куска хлеба</button><button type="button">Капучино 300 мл и круассан</button><button type="button">Гречка 200 г с куриной грудкой</button><button type="button">Шаурма в лаваше</button>
+        </div>
+      </div>
+      <footer class="sheet-foot"><button class="btn btn-primary" id="tsGo" disabled><svg aria-hidden="true"><use href="#i-spark"/></svg>Посчитать КБЖУ</button></footer>
     </section>
   </div>
 
