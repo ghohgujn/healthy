@@ -1102,43 +1102,75 @@
     setTimeout(arm, 450);   // есть куда ещё возвращаться — новую запись ставим после анимации жеста
   });
 
-  /* ---------- свайп вправо с любого места = «назад» ----------
-     Окно на весь экран (чат, профиль) едет за пальцем; у шторок и вкладок — стрелка слева.
-     В браузере от самого края не перехватываем: там работает системный жест Safari. */
+  /* ---------- жесты по горизонтали ----------
+     Открыто окно (чат, профиль, шторка): свайп вправо с любого места = «назад», окно едет за пальцем.
+     Окон нет: свайп влево/вправо листает вкладки по порядку нижнего меню — Сегодня · Активность · Лента · Чаты · Профиль.
+     В браузере от самых краёв не перехватываем: там системные жесты Safari «назад/вперёд». */
   const standaloneApp = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const TAB_ORDER = ['today', 'activity', 'feed', 'chats', 'profile'];
   {
     const hint = document.createElement('div'); hint.className = 'edge-back'; hint.innerHTML = '<svg><use href="#i-back"/></svg>'; document.body.appendChild(hint);
-    const SKIP = 'input, textarea, select, [contenteditable], .friend-row, .share-row, .chips, .composer, .cam, .stepper, .rec-bar, [data-noswipe]';
+    const SKIP = 'input, textarea, select, [contenteditable], .friend-row, .share-row, .chips, .refine-chips, .composer, .cam, .stepper, .rec-bar, .fab, .fab-voice, [data-noswipe]';
     const hScroll = el => { for (; el && el !== document.body; el = el.parentElement) if (el.scrollWidth > el.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return true; return false; };
+    const tabEl = n => $('#tab-' + n);
     let g = null;
     const reset = () => { hint.style.cssText = ''; hint.classList.remove('on'); };
     addEventListener('touchstart', e => {
       g = null; if (e.touches.length > 1) return;
       const t = e.touches[0], tg = e.target;
-      if (!standaloneApp && t.clientX < 24) return;
-      if (!canBack() || tg.closest?.(SKIP) || hScroll(tg)) return;
+      if (!standaloneApp && (t.clientX < 24 || t.clientX > innerWidth - 24)) return;
+      if (tg.closest?.(SKIP) || hScroll(tg)) return;
+      if (document.querySelector('#onb:not([hidden]), .fab-goo.open')) return;
       const top = stack[stack.length - 1]?.el;
-      g = { x: t.clientX, y: t.clientY, t: performance.now(), dx: 0, lock: 0, el: top && top.matches('.chat, .uview') ? top : null };
+      if (top) g = { mode: 'back', x: t.clientX, y: t.clientY, t: performance.now(), dx: 0, lock: 0, el: top.matches('.chat, .uview') ? top : null };
+      else g = { mode: 'tabs', x: t.clientX, y: t.clientY, t: performance.now(), dx: 0, lock: 0, el: tabEl(tab), i: TAB_ORDER.indexOf(tab) };
     }, { passive: true });
     addEventListener('touchmove', e => {
       if (!g) return; const t = e.touches[0], dx = t.clientX - g.x, dy = t.clientY - g.y;
       if (!g.lock) {
-        if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
-        if (dx <= 0 || Math.abs(dy) > Math.abs(dx) * 0.8) { g = null; return; }   // влево или вертикально — не наше
+        if (Math.abs(dx) < 12 && Math.abs(dy) < 12) return;
+        if (Math.abs(dy) > Math.abs(dx) * 0.8 || (g.mode === 'back' && dx <= 0)) { g = null; return; }   // вертикально (прокрутка) — не наше
         g.lock = 1; if (g.el) g.el.style.transition = 'none';
       }
       if (e.cancelable) e.preventDefault();
-      g.dx = Math.max(0, dx);
-      if (g.el) { g.el.style.transform = `translate3d(${g.dx}px,0,0)`; g.el.style.boxShadow = '-8px 0 24px oklch(0% 0 0 / 0.12)'; }
-      const k = Math.min(1, g.dx / 90); hint.style.cssText = `opacity:${k};transform:translate(${Math.min(g.dx, 90) * 0.5}px,-50%) scale(${0.6 + 0.4 * k})`; hint.classList.toggle('on', g.dx > 80);
+      if (g.mode === 'back') {
+        g.dx = Math.max(0, dx);
+        if (g.el) { g.el.style.transform = `translate3d(${g.dx}px,0,0)`; g.el.style.boxShadow = '-8px 0 24px oklch(0% 0 0 / 0.12)'; }
+        const k = Math.min(1, g.dx / 90); hint.style.cssText = `opacity:${k};transform:translate(${Math.min(g.dx, 90) * 0.5}px,-50%) scale(${0.6 + 0.4 * k})`; hint.classList.toggle('on', g.dx > 80);
+        return;
+      }
+      // вкладки: содержимое едет за пальцем; у крайней вкладки — «резинка»
+      const next = TAB_ORDER[g.i + (dx < 0 ? 1 : -1)];
+      g.dx = dx; const shown = next ? dx * 0.55 : dx * 0.12;
+      if (g.el) { g.el.style.transform = `translate3d(${shown}px,0,0)`; g.el.style.opacity = String(1 - Math.min(0.5, Math.abs(shown) / 500)); }
     }, { passive: false });
     const end = () => {
-      if (!g) return; const { el, dx, lock } = g, v = dx / Math.max(1, performance.now() - g.t); g = null; reset();
+      if (!g) return; const { mode, el, dx, lock, i } = g, v = Math.abs(dx) / Math.max(1, performance.now() - g.t); g = null; reset();
       if (!lock) return;
-      const go = dx > 90 || (v > 0.5 && dx > 40);
-      if (!el) { if (go) goBack(); return; }
+      const go = Math.abs(dx) > 80 || (v > 0.45 && Math.abs(dx) > 36);
+      if (mode === 'tabs') {
+        const next = go ? TAB_ORDER[i + (dx < 0 ? 1 : -1)] : null;
+        if (!el) { if (next) showTab(next); return; }
+        el.style.transition = 'transform 160ms cubic-bezier(.4,0,1,1), opacity 160ms linear';
+        if (!next) { el.style.transform = ''; el.style.opacity = ''; setTimeout(() => { el.style.transition = ''; }, 170); return; }
+        const dir = dx < 0 ? -1 : 1;
+        el.style.transform = `translate3d(${dir * 40}%,0,0)`; el.style.opacity = '0';
+        try { navigator.vibrate?.(6); } catch {}
+        setTimeout(() => {
+          el.style.transition = el.style.transform = el.style.opacity = '';
+          showTab(next);
+          const ne = tabEl(next); if (!ne) return;
+          ne.style.transition = 'none'; ne.style.transform = `translate3d(${-dir * 30}%,0,0)`; ne.style.opacity = '0';
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            ne.style.transition = 'transform 260ms cubic-bezier(.2,.8,.2,1), opacity 200ms ease-out'; ne.style.transform = ''; ne.style.opacity = '';
+            setTimeout(() => { ne.style.transition = ''; }, 280);
+          }));
+        }, 150);
+        return;
+      }
+      if (!el) { if (go && dx > 0) goBack(); return; }
       el.style.transition = 'transform 200ms cubic-bezier(.2,.8,.2,1)';
-      if (go) {
+      if (go && dx > 0) {
         el.style.transform = 'translate3d(100%,0,0)';
         setTimeout(() => { goBack(); el.style.transform = el.style.transition = el.style.boxShadow = ''; }, 190);
       } else { el.style.transform = ''; setTimeout(() => { el.style.transition = el.style.boxShadow = ''; }, 210); }
