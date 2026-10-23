@@ -1689,3 +1689,9 @@ html.no-select, html.no-select * { -webkit-user-select: none !important; user-se
 .au-side small.on { color: var(--color-ok); font-weight: 700; }
 .au-badge { margin-left: 6px; padding: 1px 6px; border-radius: 99px; background: var(--color-ink); color: var(--color-on-ink); font-size: 10px; font-weight: 700; font-style: normal; vertical-align: 2px; }
 .au-empty { padding: var(--space-md) 0; text-align: center; }
+/* свайп-ответ в комментариях — как в чате: стрелка в кружке справа */
+.cmt-swipe { width: 32px; height: 32px; right: 12px; margin-top: 0; display: grid; place-items: center; border-radius: 50%; background: var(--color-paper-2); color: var(--color-ink-2); pointer-events: none; }
+.cmt-swipe svg { width: 18px; height: 18px; }
+.cmt.armed .cmt-swipe { background: var(--color-ink); color: var(--color-on-ink); }
+.cmt { -webkit-user-select: none; user-select: none; }
+.cmt-text { -webkit-user-select: text; user-select: text; }

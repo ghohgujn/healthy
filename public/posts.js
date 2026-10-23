@@ -321,23 +321,36 @@
       try { const r = await api(`/api/comments/${c.id}/like`, { method: was ? 'DELETE' : 'POST' }); c.likes = r.likes; c.liked = r.liked; paintCLike(b, c); }
       catch (err) { c.liked = was; c.likes += was ? 1 : -1; paintCLike(b, c); HF.toast(err.message); }
     });
-    // тап по комментарию — ответить; свайп влево — тоже ответить (как в TikTok)
+    // свайп влево по комментарию — ответить, ровно как в сообщениях: строка едет за пальцем, справа появляется стрелка,
+    // после 56 px — вибрация и «готово», дальше «резинка». Тянуть можно с любого места строки, кроме плеера.
     box.querySelectorAll('.cmt').forEach(li => {
       const c = comments.find(x => x.id === +li.dataset.cid), row = li.querySelector('.cmt-row');
-      let x0 = 0, y0 = 0, dx = 0, drag = false, moved = false;
-      li.addEventListener('pointerdown', e => { if (e.target.closest('button, .cmt-voice, .cmt-circle')) return; x0 = e.clientX; y0 = e.clientY; dx = 0; drag = true; moved = false; });
+      let x0 = 0, y0 = 0, dx = 0, on = false, moved = false, armed = false;
+      const paint = () => { row.style.transform = dx ? `translateX(${dx}px)` : ''; li.style.setProperty('--sw', Math.min(1, -dx / 56).toFixed(3)); };
+      li.addEventListener('pointerdown', e => {
+        if (e.pointerType === 'mouse' && e.button) return;
+        if (e.target.closest('.cmt-voice, .cmt-circle')) return;
+        x0 = e.clientX; y0 = e.clientY; dx = 0; on = true; moved = false; armed = false;
+      });
       li.addEventListener('pointermove', e => {
-        if (!drag) return;
+        if (!on) return;
         const ddx = e.clientX - x0, ddy = e.clientY - y0;
-        if (!moved && Math.abs(ddy) > 10 && Math.abs(ddy) > Math.abs(ddx)) { drag = false; return; }   // это вертикальная прокрутка
-        if (ddx < -8) { moved = true; dx = Math.max(-84, ddx); row.style.transform = `translateX(${dx}px)`; li.classList.toggle('armed', dx < -56); li.style.setProperty('--sw', Math.min(1, -dx / 56)); }
+        if (!moved && Math.abs(ddy) > 10 && Math.abs(ddy) > Math.abs(ddx)) { on = false; return; }   // вертикальная прокрутка
+        if (ddx < -6) {
+          if (!moved) { moved = true; row.style.transition = 'none'; try { li.setPointerCapture(e.pointerId); } catch {} }
+          dx = Math.max(-100, ddx > -64 ? ddx : -64 + (ddx + 64) * 0.4);
+          paint();
+          const a = dx < -56; if (a !== armed) { armed = a; li.classList.toggle('armed', a); if (a) try { navigator.vibrate?.(12); } catch {} }
+        }
       });
       const end = () => {
-        if (!drag) return; drag = false;
-        row.style.transform = ''; li.style.removeProperty('--sw');
-        if (li.classList.contains('armed')) { li.classList.remove('armed'); try { navigator.vibrate?.(15); } catch {} setReply(c); }
+        if (!on) return; on = false;
+        row.style.transition = ''; dx = 0; paint(); li.style.removeProperty('--sw');
+        if (armed) { armed = false; li.classList.remove('armed'); setReply(c); }
+        if (moved) { li.dataset.swiped = '1'; setTimeout(() => delete li.dataset.swiped, 350); }   // после свайпа не срабатывают лайк и «Ответить» под пальцем
       };
-      li.addEventListener('pointerup', end); li.addEventListener('pointercancel', end); li.addEventListener('pointerleave', end);
+      li.addEventListener('pointerup', end); li.addEventListener('pointercancel', end);
+      li.addEventListener('click', e => { if (li.dataset.swiped) { e.stopPropagation(); e.preventDefault(); } }, true);
       li.querySelector('.cmt-main').addEventListener('click', e => { if (!moved && !e.target.closest('.cmt-voice, .cmt-circle')) setReply(c); });
     });
   }
