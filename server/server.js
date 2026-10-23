@@ -550,14 +550,15 @@ async function analyze(req, res) {
   const cA = new AbortController(), cB = new AbortController();
   const deadline = setTimeout(() => { cA.abort(); cB.abort(); }, AI_TIMEOUT_MS);
   // человек закрыл приложение или отменил — дальше модели не ждём и запасную не запускаем
+  // у входящего запроса «close» наступает сразу после чтения тела — слушаем только ответ: он закрывается, когда рвётся соединение
   const gone = () => { if (!res.writableEnded) { cA.abort(); cB.abort(); } };
-  req.once('close', gone); res.once('close', gone);
+  res.once('close', gone);
   const pA = attempt(primary, cA.signal);
   let hedgeT; const hedge = new Promise(r => { hedgeT = setTimeout(() => r(null), AI_HEDGE_MS); });
   const fails = [];
   let res0 = await Promise.race([pA, hedge]); clearTimeout(hedgeT);
   if (res0 && !res0.ok) fails.push(res0);
-  if (req.destroyed || res.destroyed) { clearTimeout(deadline); cA.abort(); cB.abort(); return; }
+  if (res.destroyed || req.socket?.destroyed) { clearTimeout(deadline); cA.abort(); cB.abort(); return; }
   if (!res0?.ok && !(res0 && (res0.status === 402 || res0.status === 429))) {   // баланс и лимит ключа общие — запасная не поможет
     const pB = attempt(backup, cB.signal), list = res0 ? [pB] : [pA, pB];
     res0 = await new Promise(done => { let left = list.length; for (const p of list) p.then(r => { if (r.ok) done(r); else { if (!fails.includes(r)) fails.push(r); if (--left === 0) done(null); } }); });
