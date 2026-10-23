@@ -218,7 +218,7 @@
       <div class="fc-actions">
         <button class="fc-btn like ${p.liked ? 'on' : ''}" data-like="${p.id}" aria-pressed="${p.liked}" aria-label="Нравится"><svg><use href="#${p.liked ? 'i-heart' : 'i-heart-o'}"/></svg><span>${p.likes || ''}</span></button>
         <button class="fc-btn" data-open="${p.id}" aria-label="Комментарии${p.comments ? `: ${p.comments}` : ''}"><svg><use href="#i-comment"/></svg><span>${p.comments || ''}</span></button>
-        <button class="fc-btn" data-send="${p.id}" aria-label="Отправить другу"><svg><use href="#i-share"/></svg></button>
+        <button class="fc-btn" data-send="${p.id}" aria-label="Поделиться"><svg><use href="#i-share"/></svg></button>
       </div>
       <div class="fc-text"><p class="fc-title">${esc(p.meta?.title || '')}</p><p class="fc-macros">${macros(p.meta)}</p>
         ${p.caption ? `<p class="fc-cap"><b>${esc(p.author.name)}</b> ${esc(p.caption)}</p>` : ''}
@@ -238,7 +238,7 @@
     root.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openPost(+b.dataset.open, true));
     root.querySelectorAll('[data-send]').forEach(b => b.onclick = () => {
       const p = list.find(x => x.id === +b.dataset.send); if (!p) return;
-      S().shareMeal({ post: p.id, name: p.meta?.title || 'Публикация', thumb: p.media, items: [], totals: { kcal: p.meta?.kcal || 0, p: p.meta?.p || 0, f: p.meta?.f || 0, c: p.meta?.c || 0 } });
+      S().sharePost(p);
     });
     root.querySelectorAll('[data-like]').forEach(b => b.onclick = () => toggleLike(list.find(p => p.id === +b.dataset.like), b));
     root.querySelectorAll('[data-del]').forEach(b => b.onclick = () => deletePost(+b.dataset.del));

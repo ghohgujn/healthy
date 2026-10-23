@@ -98,6 +98,11 @@ window.HFMockApi = (() => {
       const um = /^\/api\/users\/(\d+)$/.exec(p);
       const cmk = /^\/api\/coach\/(\d+)$/.exec(p);
       if (cmk) { st.coaches = st.coaches || []; const id = +cmk[1]; st.coaches = M === 'POST' ? [...new Set([...st.coaches, id])] : st.coaches.filter(v => v !== id); return { coach: M === 'POST' }; }
+      if (p === '/api/invite') return { code: 'demoInv1', joined: 2, og: '' };
+      if (p === '/api/invite/reset') return { code: 'demoInv' + (++st.id) };
+      if (p === '/api/invite/accept') return { user: who(2), state: 'friends', already: true };
+      if (p === '/api/me/og' || /^\/api\/posts\/\d+\/og$/.test(p)) return { og: st.media[body.media] || '' };
+      if (/^\/api\/invite\/\w+$/.test(p)) return { user: who(2), friends: 5, posts: 14, card: '' };
       if (p === '/api/clients') return { clients: (st.clients || [2]).map(id => ({ ...who(id), today: SUM[id] ? { kcal: SUM[id].kcal, goal: SUM[id].goal, meals: SUM[id].meals } : null })), coaches: (st.coaches || []).map(who) };
       const dmk = /^\/api\/users\/(\d+)\/diary$/.exec(p);
       if (dmk) { const n = +(u.searchParams.get('days') || 7), days = {}, now = new Date();

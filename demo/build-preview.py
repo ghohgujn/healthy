@@ -4,7 +4,7 @@ d = 'public/'
 h = open(d + 'index.html').read()
 links = '<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet">'   # превью-артефакт: свои шрифты недоступны
 body = re.search(r'<body>(.*)</body>', h, re.S).group(1)
-for s in ('calc.js', 'app.js', 'social.js', 'onboarding.js', 'posts.js', 'reports.js'): body = body.replace(f'<script src="{s}"></script>', '')
+for s in ('calc.js', 'app.js', 'social.js', 'share.js', 'onboarding.js', 'posts.js', 'reports.js'): body = body.replace(f'<script src="{s}"></script>', '')
 js = lambda f: '<script>' + open(f).read() + '</script>'
 out = f'''<title>Healthy Fit</title>
 <meta name="claude:viewport-fit-sides" content="cover">
@@ -19,6 +19,7 @@ out = f'''<title>Healthy Fit</title>
 {js(d + 'app.js')}
 {js('demo/mock-api.js')}
 {js(d + 'social.js')}
+{js(d + 'share.js')}
 {js(d + 'onboarding.js')}
 {js(d + 'posts.js')}
 {js(d + 'reports.js')}'''

@@ -11,8 +11,12 @@
   const P = () => HF.db.profile;
   const STEPS = ['welcome', 'account', 'goal', 'body', 'activity', 'plan'];
 
-  function open(force) {
+  let guest = null;   // пришёл по ссылке друга: кто зовёт и чем поделился
+  function open(force, fromLink) {
+    if (!el.hidden) return;
     step = 0; mode = 'reg';
+    if (window.HFShare && (fromLink || window.HFShare.pending().code || window.HFShare.pending().post))
+      window.HFShare.guestInfo().then(g => { guest = g; if (STEPS[step] === 'welcome' && !el.hidden) render(); }).catch(() => {});
     acc = { name: P().name || '', username: '', password: '' };
     el.hidden = false; document.body.style.overflow = 'hidden'; HF.setInert();
     render();
@@ -21,6 +25,7 @@
   function close() {
     el.hidden = true; document.body.style.overflow = ''; HF.setInert();
     if (S()?.me) window.HFInstall?.maybe(1600);   // зарегистрировался — предложим поставить на экран «Домой»
+    if (S()?.me) window.HFShare?.afterAuth();   // открыть публикацию, по ссылке на которую пришёл
     try { localStorage.setItem(KEY, '1'); } catch {}
     HF.render();
   }
@@ -37,6 +42,21 @@
 
     if (name === 'welcome') {
       next.hidden = true;
+      if (guest) {
+        const u = guest.user, pst = guest.post, first = (u.name || '').split(' ')[0];
+        const avaS = u.avatar ? `<span class="avatar inv-ava" style="background-image:url('${esc(u.avatar)}')"></span>` : `<span class="avatar inv-ava">${esc((u.name || '?').charAt(0).toUpperCase())}</span>`;
+        body.innerHTML = `<div class="onb-hero onb-invite">
+          ${pst ? `<figure class="onb-post"><img src="${esc(pst.card)}" alt="${esc(pst.title)}"></figure>` : ''}
+          <div class="onb-from">${avaS}<span><b>${esc(u.name)}</b><small>@${esc(u.username)}${u.stats?.streak > 1 ? ` · ${u.stats.streak} ${S().plural(u.stats.streak, 'день', 'дня', 'дней')} подряд` : ''}</small></span></div>
+          <h1 class="onb-h" id="onbTitle">${pst ? `${esc(first)} делится едой в Healthy Fit` : `${esc(first)} зовёт вас в Healthy Fit`}</h1>
+          <p class="onb-p">Создайте аккаунт — и вы сразу друзья: видите еду друг друга, переписываетесь и держите серию вместе. КБЖУ по фото — за пару секунд.</p>
+          <div class="onb-actions">
+            <button class="btn btn-primary" data-go="reg">Создать аккаунт и добавиться</button>
+            <button class="btn btn-ghost" data-go="login">У меня уже есть аккаунт</button>
+          </div></div>`;
+        body.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { mode = b.dataset.go; step = 1; render(); });
+        return;
+      }
       body.innerHTML = `<div class="onb-hero">
         <div class="onb-logo" aria-hidden="true"><span></span></div>
         <h1 class="onb-h" id="onbTitle">Сфоткал — и знаешь, сколько съел</h1>

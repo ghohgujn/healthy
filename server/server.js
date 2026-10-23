@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS health (user_id INTEGER NOT NULL, date TEXT NOT NULL,
 const stmts = new Map();
 const q = sql => { let st = stmts.get(sql); if (!st) { st = db.prepare(sql); stmts.set(sql, st); } return st; };
 // миграции: добавляем колонки, если их ещё нет
-for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER'], ['users', 'share_summary', 'INTEGER NOT NULL DEFAULT 1'], ['posts', 'gallery', 'TEXT'], ['comments', 'kind', "TEXT NOT NULL DEFAULT 'text'"], ['users', 'seen_at', 'INTEGER'], ['push_subs', 'sess', 'TEXT'], ['comments', 'media', 'TEXT'], ['comments', 'meta', 'TEXT']])
+for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER'], ['users', 'share_summary', 'INTEGER NOT NULL DEFAULT 1'], ['posts', 'gallery', 'TEXT'], ['comments', 'kind', "TEXT NOT NULL DEFAULT 'text'"], ['users', 'seen_at', 'INTEGER'], ['push_subs', 'sess', 'TEXT'], ['comments', 'media', 'TEXT'], ['comments', 'meta', 'TEXT'], ['users', 'invite', 'TEXT'], ['users', 'og', 'TEXT'], ['users', 'ref_by', 'INTEGER'], ['posts', 'og', 'TEXT']])
   if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${def}`);
 db.exec(`CREATE TABLE IF NOT EXISTS comment_likes (comment_id INTEGER NOT NULL, user_id INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (comment_id, user_id));
 CREATE INDEX IF NOT EXISTS posts_vis ON posts (vis, id);
@@ -71,6 +71,11 @@ CREATE INDEX IF NOT EXISTS reports_status ON reports (status, id);
 CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id);`);
 db.exec(`CREATE TABLE IF NOT EXISTS coaches (client_id INTEGER NOT NULL, coach_id INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (client_id, coach_id));
 CREATE INDEX IF NOT EXISTS coaches_coach ON coaches (coach_id);`);
+// приглашения: у каждого своя ссылка /i/<код>; открывший её сразу становится другом пригласившего
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS users_invite ON users (invite);
+CREATE INDEX IF NOT EXISTS users_og ON users (og);
+CREATE INDEX IF NOT EXISTS users_ref ON users (ref_by);
+CREATE INDEX IF NOT EXISTS posts_og ON posts (og);`);
 db.exec('PRAGMA optimize');
 const now = () => Date.now();
 
@@ -236,6 +241,15 @@ function shapePost(p, me) {
 }
 // открытые публикации видят все; закрытые — автор и его друзья
 const canSeePost = (me, p) => p.vis === 'public' || canSee(me, p.user_id);
+const newCode = () => randomBytes(6).toString('base64url');
+const inviteCode = u => { if (u.invite) return u.invite; const c = newCode(); q('UPDATE users SET invite = ? WHERE id = ?').run(c, u.id); u.invite = c; return c; };
+const inviter = code => code && /^[A-Za-z0-9_-]{6,16}$/.test(code) ? q('SELECT * FROM users WHERE invite = ? AND username != ?').get(code, BOT_USERNAME) : null;
+const inviteFacts = u => ({ friends: q(`SELECT COUNT(*) n FROM friends WHERE (a = ? OR b = ?) AND status = 'accepted'`).get(u.id, u.id).n,
+  posts: q('SELECT COUNT(*) n FROM posts WHERE user_id = ?').get(u.id).n, card: u.og ? `/media/${u.og}` : '' });
+async function dropMedia(id) {
+  if (q('SELECT 1 FROM posts WHERE media = ? OR og = ?').get(id, id) || q('SELECT 1 FROM users WHERE avatar = ? OR og = ?').get(id, id)) return;
+  q('DELETE FROM media WHERE id = ?').run(id); await unlink(join(MEDIA, id)).catch(() => {});
+}
 const isAdminId = id => isAdmin(q('SELECT username FROM users WHERE id = ?').get(id));
 function visiblePost(id, me) {
   const p = q('SELECT * FROM posts WHERE id = ?').get(id);
@@ -404,7 +418,8 @@ async function serveMedia(req, res, id) {
   const m = q('SELECT * FROM media WHERE id = ?').get(id);
   if (!m) { res.writeHead(404); return res.end(); }
   const me = userOf(req);
-  const isAvatar = q('SELECT 1 FROM users WHERE avatar = ?').get(id);
+  // аватарки и карточки-превью для мессенджеров открыты всем: ими человек делится сам
+  const isAvatar = q('SELECT 1 FROM users WHERE avatar = ? OR og = ?').get(id, id) || q('SELECT 1 FROM posts WHERE og = ?').get(id);
   const allowed = isAvatar || isAdmin(me) || (me && (m.owner === me.id ||
     q('SELECT 1 FROM messages WHERE media = ? AND (sender = ? OR recipient = ?)').get(id, me.id, me.id) ||
     q('SELECT user_id, vis FROM posts WHERE media = ? OR gallery LIKE ?').all(id, `%"${id}"%`).some(p => canSeePost(me.id, p)) ||
@@ -522,7 +537,64 @@ async function api(req, res, url) {
   }
   if (p === '/api/reports' && M === 'POST') return saveReport(req, res);
   if (p === '/api/push/key' && M === 'GET') return send(res, 200, { key: VAPID.publicKey });
+  // публичные карточки для гостя, пришедшего по ссылке: только то, чем человек сам поделился
+  const ic = /^\/api\/invite\/([A-Za-z0-9_-]{6,16})$/.exec(p);
+  if (ic && M === 'GET') {
+    rate('inv:' + ipOf(req), 120, 600_000);
+    const u = inviter(ic[1]); if (!u) throw fail(404, 'Ссылка устарела');
+    return send(res, 200, { user: pub(u), ...inviteFacts(u) });
+  }
+  const sp = /^\/api\/share\/post\/(\d+)$/.exec(p);
+  if (sp && M === 'GET') {
+    rate('inv:' + ipOf(req), 120, 600_000);
+    const post = q('SELECT * FROM posts WHERE id = ?').get(Number(sp[1]));
+    if (!post?.og) throw fail(404, 'Публикация недоступна');
+    const x = post.meta ? JSON.parse(post.meta) : {}, a = q('SELECT * FROM users WHERE id = ?').get(post.user_id);
+    return send(res, 200, { post: { id: post.id, title: x.title || '', kcal: x.kcal || 0, p: x.p || 0, f: x.f || 0, c: x.c || 0, day: !!x.day, card: `/media/${post.og}`, author: pub(a) } });
+  }
   const me = need(req);
+  if (p === '/api/invite' && M === 'GET') {
+    return send(res, 200, { code: inviteCode(me), joined: q('SELECT COUNT(*) n FROM users WHERE ref_by = ?').get(me.id).n, og: me.og ? `/media/${me.og}` : '' });
+  }
+  if (p === '/api/invite/reset' && M === 'POST') {
+    rate('invreset:' + me.id, 10, 3_600_000);
+    q('UPDATE users SET invite = ? WHERE id = ?').run(newCode(), me.id);
+    return send(res, 200, { code: q('SELECT invite FROM users WHERE id = ?').get(me.id).invite });
+  }
+  if (p === '/api/invite/accept' && M === 'POST') {
+    rate('invacc:' + me.id, 30, 3_600_000);
+    const b = await json(req, 2_000), u = inviter(String(b.code || ''));
+    if (!u) throw fail(404, 'Ссылка устарела — попросите новую');
+    if (u.id === me.id) return send(res, 200, { user: pub(u), state: 'self' });
+    const a = Math.min(me.id, u.id), c = Math.max(me.id, u.id), was = friendState(me.id, u.id);
+    if (was !== 'friends') {
+      q(`INSERT INTO friends (a, b, status, created) VALUES (?, ?, 'accepted', ?) ON CONFLICT (a, b) DO UPDATE SET status = 'accepted'`).run(a, c, now());
+      // «пришёл по ссылке» — только для свежих аккаунтов (первые сутки), чтобы счётчик приглашённых был честным
+      const fresh = !me.ref_by && now() - me.created < 864e5;
+      if (fresh) q('UPDATE users SET ref_by = ? WHERE id = ?').run(u.id, me.id);
+      notify(u.id, { title: fresh ? 'По вашей ссылке пришёл друг 🎉' : 'Новый друг', body: `${me.name} (@${me.username}) ${fresh ? 'присоединился(ась) — вы теперь друзья' : 'открыл(а) вашу ссылку — вы теперь друзья'}`, url: `/?user=${me.id}`, tag: `friend-${me.id}` });
+    }
+    return send(res, 200, { user: pub(u), state: 'friends', already: was === 'friends' });
+  }
+  if (p === '/api/me/og' && M === 'POST') {
+    const b = await json(req, 2_000), m = q('SELECT * FROM media WHERE id = ? AND owner = ?').get(String(b.media || ''), me.id);
+    if (!m || !m.type.startsWith('image/')) throw fail(400, 'Нужна картинка');
+    const old = me.og; q('UPDATE users SET og = ? WHERE id = ?').run(m.id, me.id);
+    if (old && old !== m.id) await dropMedia(old);
+    return send(res, 200, { og: `/media/${m.id}` });
+  }
+  const po = /^\/api\/posts\/(\d+)\/og$/.exec(p);
+  if (po && M === 'POST') {
+    const post = q('SELECT * FROM posts WHERE id = ?').get(Number(po[1]));
+    if (!post || !canSeePost(me.id, post) || (post.user_id !== me.id && post.vis !== 'public')) throw fail(404, 'Публикация не найдена');
+    const b = await json(req, 2_000), m = q('SELECT * FROM media WHERE id = ? AND owner = ?').get(String(b.media || ''), me.id);
+    if (!m || !m.type.startsWith('image/')) throw fail(400, 'Нужна картинка');
+    // карточку пересобирает только автор; остальные получают уже готовую
+    if (post.og && post.user_id !== me.id) { await dropMedia(m.id); return send(res, 200, { og: `/media/${post.og}` }); }
+    const old = post.og; q('UPDATE posts SET og = ? WHERE id = ?').run(m.id, post.id);
+    if (old && old !== m.id) await dropMedia(old);
+    return send(res, 200, { og: `/media/${m.id}` });
+  }
   if (p === '/api/push/subscribe' && M === 'POST') {
     const b = await json(req, 8_000), ep = String(b.endpoint || ''), k = b.keys || {};
     let host = ''; try { const u = new URL(ep); if (u.protocol === 'https:') host = u.hostname; } catch {}
@@ -897,7 +969,7 @@ function shapeMsg(m) {
 /* ---------------- static ---------------- */
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json',
   '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.md': 'text/plain; charset=utf-8',
-  '.woff2': 'font/woff2' };
+  '.woff2': 'font/woff2', '.jpg': 'image/jpeg' };
 // Статика: держим в памяти, отдаём с ETag — повторный заход получает 304 без тела
 const staticCache = new Map();
 async function staticFile(file) {
@@ -928,6 +1000,45 @@ async function serveStatic(req, res, url) {
   res.end(req.method === 'HEAD' ? undefined : f.buf);
 }
 
+/* ---------------- ссылки для мессенджеров ----------------
+   /i/<код> — приглашение, /p/<id> — публикация. Отдаём то же приложение, но с og-тегами: Telegram, WhatsApp и VK
+   рисуют по ним карточку-превью (картинку собирает приложение на телефоне и загружает как users.og / posts.og). */
+const escH = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const nfr = v => Math.round(+v || 0).toLocaleString('ru-RU');
+async function serveShare(req, res, url) {
+  const base = `${req.headers['x-forwarded-proto'] === 'http' ? 'http' : 'https'}://${req.headers.host}`;
+  let title = 'Healthy Fit — КБЖУ по фото', desc = 'Сфоткал — и знаешь, сколько съел. Граммы и КБЖУ по фото за пару секунд, вода, тренировки и друзья.', img = '/og.jpg';
+  const [, kind, id] = /^\/(i|p)\/([^/]+)/.exec(url.pathname);
+  if (kind === 'i') {
+    const u = inviter(id);
+    if (u) {
+      const st = JSON.parse(u.stats || '{}');
+      title = `${u.name} зовёт вас в Healthy Fit`;
+      desc = `${st.streak > 1 ? `Уже ${st.streak} дн. подряд записывает еду. ` : ''}Добавьтесь в друзья в одно касание — и держите серию вместе. КБЖУ по фото за пару секунд.`;
+      if (u.og) img = `/media/${u.og}`; else if (u.avatar) img = `/media/${u.avatar}`;
+    }
+  } else {
+    const post = q('SELECT * FROM posts WHERE id = ?').get(Number(id));
+    if (post?.og) {
+      const x = post.meta ? JSON.parse(post.meta) : {}, a = q('SELECT name FROM users WHERE id = ?').get(post.user_id);
+      title = `${x.title || 'Блюдо'} — ${nfr(x.kcal)} ккал`;
+      desc = `Б ${nfr(x.p)} · Ж ${nfr(x.f)} · У ${nfr(x.c)} г. ${a?.name || ''} считает КБЖУ по фото в Healthy Fit — попробуйте со своей едой.`;
+      img = `/media/${post.og}`;
+    }
+  }
+  const f = await staticFile(join(ROOT, 'index.html'));
+  const meta = [['og:type', 'website'], ['og:site_name', 'Healthy Fit'], ['og:title', title], ['og:description', desc], ['og:url', base + url.pathname + url.search],
+    ['og:image', base + img], ['og:image:width', '1200'], ['og:image:height', '630'], ['og:locale', 'ru_RU']]
+    .map(([k, v]) => `<meta property="${k}" content="${escH(v)}">`).join('\n  ') + `\n  <meta name="twitter:card" content="summary_large_image">`;
+  const html = f.buf.toString('utf8')
+    .replace(/<title>[^<]*<\/title>/, `<title>${escH(title)}</title>`)
+    .replace(/(<meta name="description" content=")[^"]*/, `$1${escH(desc)}`)
+    .replace('<meta charset="utf-8">', `<meta charset="utf-8">\n  ${meta}`)
+    // страница живёт по адресу /i/… — относительные пути к стилям и скриптам делаем абсолютными
+    .replace(/(\s(?:src|href)=")(?![a-z]+:|\/|#)/g, '$1/');
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+  res.end(req.method === 'HEAD' ? undefined : html);
+}
 
 /* ---------------- «Помощник по питанию» ----------------
    Раз в день вечером (20:00–23:00 по APP_TZ) пишет каждому в чат: итоги дня, «неделя пока» и один совет на завтра;
@@ -1034,6 +1145,7 @@ http.createServer(async (req, res) => {
     const mm = /^\/media\/([a-f0-9]{32}\.[a-z0-9]{2,4})$/.exec(url.pathname);
     if (mm) return await serveMedia(req, res, mm[1]);
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
+    if (/^\/(i\/[A-Za-z0-9_-]{6,16}|p\/\d+)\/?$/.test(url.pathname)) return await serveShare(req, res, url);
     await serveStatic(req, res, url);
   } catch (e) {
     if (!e.public) console.error(e);

@@ -63,7 +63,9 @@
     // имя из аккаунта, если в профиле на телефоне его ещё нет
     if (me && !HF.db.profile.name && me.name) { HF.db.profile.name = me.name; HF.save(); HF.render(); }
     renderAuth(); renderAccountCard(); renderHealthCard();
-    if (me) { await refreshSocial(); pullHealth(); restoreIfEmpty(); syncPush(true); route(); }
+    if (me) { await refreshSocial(); pullHealth(); restoreIfEmpty(); syncPush(true); route(); window.HFShare?.afterAuth(); }
+    // пришёл по ссылке друга без аккаунта — сразу экран «вас зовут», даже если онбординг уже проходили на этом телефоне
+    else if (window.HFShare?.pending().code || window.HFShare?.pending().post) window.HFOnboarding?.open(false, true);
     renderPushUI();
   }
   function renderAuth() {
@@ -129,10 +131,12 @@
       <p class="sub small" id="unameHint"></p>
       <label class="push-row share-sum"><div><b>Друзья видят мою сводку</b><p class="sub small">Калории и БЖУ за сегодня — только друзьям</p></div>
         <input type="checkbox" class="switch" id="shareSummary" ${me.shareSummary === false ? '' : 'checked'}></label>
+      <div class="push-row inv-row"><div><b>Пригласить друзей</b><p class="sub small">По ссылке — сразу в друзьях, без поиска и заявок</p></div><button class="btn btn-primary btn-sm" id="inviteOpen"><svg aria-hidden="true"><use href="#i-user-plus"/></svg>Позвать</button></div>
       <div id="myCoachRow"></div>
       ${me.admin ? '<div class="push-row"><div><b>Админ-панель</b><p class="sub small">Пользователи, разбор ошибок, скорость нейросети</p></div><button class="btn btn-ghost btn-sm" id="adminOpen">Открыть</button></div>' : ''}
       ${canOfferInstall() ? '<div class="push-row"><div><b>Приложение на экране «Домой»</b><p class="sub small">Быстрый запуск и уведомления</p></div><button class="btn btn-ghost btn-sm" id="installOpen">Установить</button></div>' : ''}`;
     $('#installOpen')?.addEventListener('click', openInstall);
+    $('#inviteOpen')?.addEventListener('click', () => window.HFShare?.openInvite());
     $('#adminOpen')?.addEventListener('click', () => window.HFAdmin?.open());
     // мой тренер: кто видит мой дневник — с возможностью закрыть доступ
     api('/api/clients').then(r => {
@@ -349,7 +353,9 @@
 
   function renderInbox() {
     const row = $('#friendRow');
-    row.innerHTML = friends.length ? '' : `<p class="sub friend-empty">Найдите друзей по логину через поиск выше.</p>`;
+    row.innerHTML = `<button class="friend friend-invite" id="friendInvite"><span class="avatar friend-ava"><svg aria-hidden="true"><use href="#i-user-plus"/></svg></span><span>Позвать</span></button>`
+      + (friends.length ? '' : `<p class="sub friend-empty">Отправьте ссылку — кто откроет, сразу окажется у вас в друзьях. Или найдите по логину выше.</p>`);
+    $('#friendInvite').onclick = () => window.HFShare?.openInvite();
     for (const u of friends) {
       const b = document.createElement('button'); b.className = 'friend';
       // тонкое кольцо вокруг аватарки — насколько друг заполнил дневную норму
@@ -824,7 +830,13 @@
     mine.innerHTML = `<span class="sf-ava">${avaHTML(me)}<i class="sf-plus"><svg><use href="#i-plus"/></svg></i><i class="sf-check"><svg><use href="#i-check"/></svg></i></span><span>В профиль</span>`;
     mine.onclick = () => { if (!d.thumb) { HF.toast('Для публикации нужно фото блюда'); return; } toProfile = !toProfile; mine.setAttribute('aria-pressed', String(toProfile)); updShare(); };
     if (!d.post) row.appendChild(mine);
-    if (!friends.length) row.insertAdjacentHTML('beforeend', `<p class="sub share-nofr">Друзей пока нет — найдите их во вкладке «Друзья».</p>`);
+    if (!friends.length) { row.insertAdjacentHTML('beforeend', `<p class="sub share-nofr">Друзей пока нет. <button class="link-btn" id="shareInvite">Позвать по ссылке</button></p>`); $('#shareInvite').onclick = () => { HF.closeDialog($('#shareSheet')); window.HFShare?.openInvite(); }; }
+    // наружу — в Telegram, WhatsApp, VK, картинкой: только опубликованное (своё или открытое всем)
+    const ext = $('#shareExt'), xb = ext.querySelector('.ext-box'); xb.innerHTML = ''; ext.hidden = true;
+    if (d.postObj && window.HFShare?.canShareOut(d.postObj)) {
+      const get = window.HFShare.postGetter(d.postObj); get(true).catch(() => {});   // карточку готовим заранее — тап сразу открывает мессенджер
+      xb.appendChild(window.HFShare.appsRow(get, { image: true, done: () => HF.closeDialog($('#shareSheet')) })); ext.hidden = false;
+    }
     for (const u of friends) {
       const b = document.createElement('button'); b.className = 'share-friend'; b.setAttribute('aria-pressed', 'false');
       b.innerHTML = `<span class="sf-ava">${avaHTML(u)}<i class="sf-check"><svg><use href="#i-check"/></svg></i></span><span>${esc(u.name)}</span>`;
@@ -834,9 +846,10 @@
     updShare(); $('#shareText').placeholder = 'Подпись к публикации или сообщение';
     HF.openDialog($('#shareSheet'));
   }
+  const sharePost = p => shareMeal({ post: p.id, postObj: p, name: p.meta?.title || 'Публикация', thumb: p.media, items: [], totals: { kcal: p.meta?.kcal || 0, p: p.meta?.p || 0, f: p.meta?.f || 0, c: p.meta?.c || 0 } });
   $('#shareSend').onclick = async () => {
     const d = shareData; if (!d || (!picked.size && !toProfile)) return;
-    const btn = $('#shareSend'); btn.disabled = true; btn.textContent = 'Отправляю…';
+    const btn = $('#shareSend'); btn.disabled = true; btn.textContent = 'Отправляю…'; let newPost = null;
     try {
       if (d.post) {   // пересылка публикации из ленты
         const body = $('#shareText').value.trim();
@@ -848,24 +861,26 @@
         for (let i = 0; i < d.images.length; i++) { btn.textContent = `Загружаю фото ${i + 1} из ${d.images.length}…`; ids.push((await uploadImage(d.images[i])).id); }
         const meta = { title: d.name, kcal: d.totals.kcal, p: d.totals.p, f: d.totals.f, c: d.totals.c, meals: d.meals };
         if (toProfile) {
-          const r = await api('/api/posts', { method: 'POST', body: { media: ids[0], gallery: ids.slice(1), caption: body, meta, vis: shareVis } });
+          const r = await api('/api/posts', { method: 'POST', body: { media: ids[0], gallery: ids.slice(1), caption: body, meta, vis: shareVis } }); newPost = r.post;
           for (const id of picked) await api(`/api/chats/${id}`, { method: 'POST', body: { kind: 'post', post: r.post.id, body } });
         } else for (const id of picked) for (let i = 0; i < ids.length; i++)
           await api(`/api/chats/${id}`, { method: 'POST', body: { kind: 'meal', media: ids[i], meta: d.meals[i], body: i === 0 ? body : '' } });
         HF.closeDialog($('#shareSheet'));
-        HF.toast(toProfile && picked.size ? `День опубликован и отправлен ${picked.size}` : toProfile ? 'День опубликован в профиле' : 'Отправлено');
+        const dt = toProfile && picked.size ? `День опубликован и отправлен ${picked.size}` : toProfile ? 'День опубликован в профиле' : 'Отправлено';
+        newPost ? HF.toast(dt, 'В Telegram и др.', () => sharePost(newPost), 7000) : HF.toast(dt);
         refreshSocial(); window.HFPosts?.refresh(); return;
       }
       let media;
       if (d.image || d.thumb) media = (await uploadImage(d.image || d.thumb)).id;   // полное фото — для эстетики ленты
       const meta = { title: d.name, kcal: d.totals.kcal, p: d.totals.p, f: d.totals.f, c: d.totals.c, items: d.items.map(i => ({ name: i.name, grams: i.grams })) };
       const body = $('#shareText').value.trim();
-      if (toProfile && media) await api('/api/posts', { method: 'POST', body: { media, caption: body, meta, vis: shareVis } });
+      if (toProfile && media) newPost = (await api('/api/posts', { method: 'POST', body: { media, caption: body, meta, vis: shareVis } })).post;
       for (const id of picked) await api(`/api/chats/${id}`, { method: 'POST', body: { kind: 'meal', media, meta, body } });
       HF.closeDialog($('#shareSheet'));
       const saved = d.onSent?.();
       const what = toProfile && picked.size ? `Опубликовано и отправлено ${picked.size}` : toProfile ? 'Опубликовано в профиле' : picked.size > 1 ? `Отправлено ${picked.size} друзьям` : 'Отправлено';
-      HF.toast(saved?.isNew ? `${what} · добавлено в дневник` : what);
+      if (newPost) HF.toast(saved?.isNew ? `${what} · добавлено в дневник` : what, 'В Telegram и др.', () => sharePost(newPost), 7000);
+      else HF.toast(saved?.isNew ? `${what} · добавлено в дневник` : what);
       refreshSocial(); window.HFPosts?.refresh();
     } catch (e) { if (!e.network) logError('share', e); HF.toast(e.message); updShare(); }
   };
@@ -1031,7 +1046,7 @@
   $('#chatAva').onclick = $('#chatName').onclick = () => { if (peer && !peer.bot) window.HFPosts?.openUser(peer.id); };
   window.HFSocial = {
     onTab(name) { tab = name; if (name === 'chats') { renderAuth(); if (me) { renderInbox(); refreshSocial(); loadClients(); } } if (name === 'profile') { renderAccountCard(); renderHealthCard(); renderPushUI(); } if (name === 'activity') renderHealthCard(); },
-    onSave, shareMeal, checkName, api, avaHTML, esc, flameBadge, openChat, plural, refreshSocial,
+    onSave, shareMeal, sharePost, checkName, api, avaHTML, esc, flameBadge, openChat, plural, refreshSocial,
     get friends() { return friends; },
     get me() { return me; },
     async auth(mode, data) {
