@@ -129,10 +129,17 @@
       <p class="sub small" id="unameHint"></p>
       <label class="push-row share-sum"><div><b>Друзья видят мою сводку</b><p class="sub small">Калории и БЖУ за сегодня — только друзьям</p></div>
         <input type="checkbox" class="switch" id="shareSummary" ${me.shareSummary === false ? '' : 'checked'}></label>
+      <div id="myCoachRow"></div>
       ${me.admin ? '<div class="push-row"><div><b>Админ-панель</b><p class="sub small">Пользователи, разбор ошибок, скорость нейросети</p></div><button class="btn btn-ghost btn-sm" id="adminOpen">Открыть</button></div>' : ''}
       ${canOfferInstall() ? '<div class="push-row"><div><b>Приложение на экране «Домой»</b><p class="sub small">Быстрый запуск и уведомления</p></div><button class="btn btn-ghost btn-sm" id="installOpen">Установить</button></div>' : ''}`;
     $('#installOpen')?.addEventListener('click', openInstall);
     $('#adminOpen')?.addEventListener('click', () => window.HFAdmin?.open());
+    // мой тренер: кто видит мой дневник — с возможностью закрыть доступ
+    api('/api/clients').then(r => {
+      coachInfo = r; const box = $('#myCoachRow'); if (!box) return;
+      box.innerHTML = r.coaches.map(c => `<div class="push-row"><div><b>Тренер: ${esc(c.name)}</b><p class="sub small">Видит ваш дневник: еду с фото, воду, активность, вес</p></div><button class="btn btn-ghost btn-sm" data-uncoach="${c.id}">Закрыть доступ</button></div>`).join('');
+      box.querySelectorAll('[data-uncoach]').forEach(b => b.onclick = async () => { try { await api(`/api/coach/${b.dataset.uncoach}`, { method: 'DELETE' }); HF.toast('Доступ к дневнику закрыт'); renderAccountCard(); } catch (e) { HF.toast(e.message); } });
+    }).catch(() => {});
     $('#shareSummary')?.addEventListener('change', async e => {
       const on = e.target.checked;
       try { await api('/api/me', { method: 'PATCH', body: { shareSummary: on } }); me.shareSummary = on; HF.toast(on ? 'Друзья видят вашу сводку за день' : 'Сводка скрыта от друзей'); }
@@ -408,7 +415,7 @@
   async function openChat(u) {
     peer = u; lastId = 0; peerRead = 0; setReplyMsg(null);
     ava($('#chatAva'), u); $('#chatName').textContent = u.name; $('#chatSub').textContent = u.bot ? 'Итоги дня каждый вечер · советы' : '@' + u.username; $('#flameBanner').hidden = true;
-    chatEl.classList.toggle('is-bot', !!u.bot);
+    chatEl.classList.toggle('is-bot', !!u.bot); $('#chatMore').hidden = !!u.bot;
     $('#msgs').innerHTML = ''; delete $('#msgs').dataset.day; $('#msgInput').value = ''; updateSendBtn();
     HF.openDialog(chatEl, '#chatBack');   // без автофокуса: сначала читаем переписку, клавиатура — по нажатию на поле
     await loadMsgs();
@@ -743,6 +750,52 @@
   }
   $('#recTrash').onclick = () => recFinish(false); $('#recCancel').onclick = () => recFinish(false);
 
+
+  /* ================= меню чата (⋮): профиль и тренер ================= */
+  const COACH_WHAT = 'Тренер видит ваш дневник целиком: всю еду с фото, граммы и КБЖУ, воду, тренировки, вес и прогресс. Отменить можно в любой момент.';
+  async function openChatMenu() {
+    if (!peer || peer.bot) return;
+    const u0 = peer; let info = { myCoach: false, iCoach: false, state: 'friends' };
+    try { const r = await api(`/api/users/${u0.id}`); info = r.user; } catch {}
+    if (peer !== u0) return;
+    ava($('#cmAva'), u0); $('#cmTitle').textContent = u0.name;
+    $('#cmSub').textContent = info.myCoach ? 'Ваш тренер' : info.iCoach ? 'Ваш подопечный' : '@' + u0.username;
+    const item = (id, ico, title, sub, danger) => `<button class="am-item${danger ? ' danger' : ''}" data-act="${id}"><span class="am-ico"><svg><use href="#${ico}"/></svg></span><span><b>${title}</b>${sub ? `<small>${sub}</small>` : ''}</span></button>`;
+    $('#cmList').innerHTML = [
+      item('profile', 'i-user', 'Открыть профиль', ''),
+      info.iCoach ? item('diary', 'i-cal', 'Дневник подопечного', 'Еда с фото, вода, активность, вес') : '',
+      info.myCoach ? item('uncoach', 'i-x', 'Убрать из тренеров', 'Дневник снова станет закрытым', true)
+        : info.state === 'friends' ? item('coach', 'i-spark', 'Назначить тренером', COACH_WHAT) : '',
+    ].join('');
+    $('#cmList').querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
+      const a = b.dataset.act;
+      if (a === 'profile' || a === 'diary') { HF.closeDialog($('#chatMenu')); window.HFPosts?.openUser(u0.id, a === 'diary'); return; }
+      try {
+        await api(`/api/coach/${u0.id}`, { method: a === 'coach' ? 'POST' : 'DELETE' });
+        HF.closeDialog($('#chatMenu'));
+        HF.toast(a === 'coach' ? `${u0.name} теперь ваш тренер — дневник открыт` : `${u0.name} больше не видит ваш дневник`);
+        renderAccountCard();
+      } catch (e) { HF.toast(e.message); }
+    });
+    HF.openDialog($('#chatMenu'));
+  }
+  $('#chatMore').onclick = openChatMenu;
+
+  /* ================= подопечные (для тренера) — в «Чатах» над сообщениями ================= */
+  let coachInfo = { clients: [], coaches: [] };
+  async function loadClients() {
+    if (!me) return;
+    try { coachInfo = await api('/api/clients'); } catch { return; }
+    const box = $('#clientsBox'), cl = coachInfo.clients;
+    box.hidden = !cl.length;
+    box.innerHTML = cl.length ? `<h2 class="h2 list-title">Подопечные</h2><div class="cl-list">${cl.map(u => {
+      const t = u.today, k = t && t.goal ? Math.min(1.2, t.kcal / t.goal) : 0, ok = t && Math.abs(t.kcal - t.goal) <= t.goal * 0.1;
+      return `<button class="cl-row" data-cl="${u.id}">${avaHTML(u)}<span class="cl-main"><b>${esc(u.name)}</b>
+        <small>${t ? `${Math.round(t.kcal)} из ${t.goal} ккал · ${t.meals} ${plural(t.meals, 'приём', 'приёма', 'приёмов')}` : 'ещё не синхронизировал дневник'}</small>
+        <span class="cl-bar"><i class="${ok ? 'ok' : k > 1.1 ? 'over' : ''}" style="width:${Math.min(100, k * 100)}%"></i></span></span><svg class="cl-chev" aria-hidden="true"><use href="#i-chev"/></svg></button>`; }).join('')}</div>` : '';
+    box.querySelectorAll('[data-cl]').forEach(b => b.onclick = () => window.HFPosts?.openUser(+b.dataset.cl, true));
+  }
+
   /* ================= share (TikTok-style) ================= */
   let shareData = null, toProfile = false; const picked = new Set();
   let shareVis = 'public';
@@ -977,7 +1030,7 @@
   /* ================= hooks ================= */
   $('#chatAva').onclick = $('#chatName').onclick = () => { if (peer && !peer.bot) window.HFPosts?.openUser(peer.id); };
   window.HFSocial = {
-    onTab(name) { tab = name; if (name === 'chats') { renderAuth(); if (me) { renderInbox(); refreshSocial(); } } if (name === 'profile') { renderAccountCard(); renderHealthCard(); renderPushUI(); } if (name === 'activity') renderHealthCard(); },
+    onTab(name) { tab = name; if (name === 'chats') { renderAuth(); if (me) { renderInbox(); refreshSocial(); loadClients(); } } if (name === 'profile') { renderAccountCard(); renderHealthCard(); renderPushUI(); } if (name === 'activity') renderHealthCard(); },
     onSave, shareMeal, checkName, api, avaHTML, esc, flameBadge, openChat, plural, refreshSocial,
     get friends() { return friends; },
     get me() { return me; },

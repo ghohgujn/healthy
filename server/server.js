@@ -69,6 +69,8 @@ CREATE INDEX IF NOT EXISTS users_avatar ON users (avatar);
 CREATE INDEX IF NOT EXISTS comments_parent ON comments (parent_id);
 CREATE INDEX IF NOT EXISTS reports_status ON reports (status, id);
 CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id);`);
+db.exec(`CREATE TABLE IF NOT EXISTS coaches (client_id INTEGER NOT NULL, coach_id INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (client_id, coach_id));
+CREATE INDEX IF NOT EXISTS coaches_coach ON coaches (coach_id);`);
 db.exec('PRAGMA optimize');
 const now = () => Date.now();
 
@@ -133,6 +135,8 @@ const friendState = (me, other) => {
 };
 const areFriends = (a, b) => friendState(a, b) === 'friends';
 const canSee = (me, author) => me === author || areFriends(me, author);
+// тренер: человек сам назначает друга тренером — тот видит его дневник целиком (еда с фото, вода, активность, вес, прогресс)
+const isCoachOf = (coach, client) => Boolean(q('SELECT 1 FROM coaches WHERE coach_id = ? AND client_id = ?').get(coach, client));
 
 /* ---------------- заявки «посчитано неверно» ---------------- */
 // администратор по умолчанию — @papa; в /etc/healthy.env можно добавить других через запятую
@@ -548,6 +552,41 @@ async function api(req, res, url) {
       reasons: JSON.parse(r.reasons || '[]'), comment: r.comment, title: r.title, model: r.model, confidence: r.confidence, caption: r.caption,
       ai: r.ai ? JSON.parse(r.ai) : null, final: JSON.parse(r.final || '[]'), media: r.media ? `/media/${r.media}` : '', note: r.note || '' })) });
   }
+  // назначить / снять тренера (только из друзей)
+  const cm2 = /^\/api\/coach\/(\d+)$/.exec(p);
+  if (cm2 && (M === 'POST' || M === 'DELETE')) {
+    const other = Number(cm2[1]), ou = q('SELECT * FROM users WHERE id = ?').get(other);
+    if (!ou || other === me.id || ou.username === BOT_USERNAME) throw fail(404, 'Пользователь не найден');
+    if (M === 'POST') {
+      if (!areFriends(me.id, other)) throw fail(403, 'Тренером можно назначить только друга');
+      const r = q('INSERT OR IGNORE INTO coaches (client_id, coach_id, created) VALUES (?, ?, ?)').run(me.id, other, now());
+      if (r.changes) notify(other, { title: 'Вы теперь тренер', body: `${me.name} открыл(а) вам свой дневник: еда, вода, активность и вес`, url: `/?user=${me.id}`, tag: `coach-${me.id}` });
+    } else q('DELETE FROM coaches WHERE client_id = ? AND coach_id = ?').run(me.id, other);
+    return send(res, 200, { coach: M === 'POST' });
+  }
+  // тренер отказывается от подопечного
+  const cl2 = /^\/api\/clients\/(\d+)$/.exec(p);
+  if (cl2 && M === 'DELETE') { q('DELETE FROM coaches WHERE client_id = ? AND coach_id = ?').run(Number(cl2[1]), me.id); return send(res, 200, { ok: true }); }
+  if (p === '/api/clients' && M === 'GET') {
+    const rows = q('SELECT u.* FROM coaches c JOIN users u ON u.id = c.client_id WHERE c.coach_id = ? ORDER BY c.created').all(me.id);
+    const coaches = q('SELECT u.* FROM coaches c JOIN users u ON u.id = c.coach_id WHERE c.client_id = ?').all(me.id).map(pub);
+    return send(res, 200, { clients: rows.map(u => { const sm = daySummary(u); return { ...pub(u), today: sm ? { kcal: sm.kcal, goal: sm.goal, meals: sm.meals, p: sm.p, pGoal: sm.pGoal } : null, synced: u.sync_at || null }; }), coaches });
+  }
+  // дневник подопечного: только тренеру (и администратору), за последние N дней
+  const dym = /^\/api\/users\/(\d+)\/diary$/.exec(p);
+  if (dym && M === 'GET') {
+    const u = q('SELECT * FROM users WHERE id = ?').get(Number(dym[1])); if (!u) throw fail(404, 'Пользователь не найден');
+    if (!(isCoachOf(me.id, u.id) || isAdmin(me))) throw fail(403, 'Дневник открыт только тренеру');
+    const n = Math.max(1, Math.min(60, Number(url.searchParams.get('days') || 14)));
+    let data = null; try { data = u.sync ? JSON.parse(u.sync) : null; } catch {}
+    if (!data?.days) return send(res, 200, { days: {}, weights: [], profile: null, settings: null, health: {}, synced: null, n });
+    const from = shiftDay(dayKey(now()), -(n - 1)), days = {}, health = {};
+    for (const [k, v] of Object.entries(data.days)) if (k >= from) days[k] = { meals: (v.meals || []).map(m => ({ id: m.id, time: m.time, type: m.type, name: m.name, thumb: m.thumb || '', portion: m.portion || 1, items: m.items || [] })), water: v.water || 0, acts: v.acts || [], steps: v.steps || 0 };
+    for (const [k, v] of Object.entries(data.health || {})) if (k >= from) health[k] = v;
+    const pr = data.profile || {};
+    return send(res, 200, { n, synced: u.sync_at, days, health, weights: (data.weights || []).slice(-120), settings: data.settings || {},
+      profile: { sex: pr.sex, age: pr.age, height: pr.height, weight: pr.weight, target: pr.target, goal: pr.goal, activity: pr.activity } });
+  }
   // все зарегистрированные: кто, когда пришёл, когда был в сети, активность
   if (p === '/api/admin/users' && M === 'GET') {
     if (!isAdmin(me)) throw fail(403, 'Только для администратора');
@@ -628,10 +667,11 @@ async function api(req, res, url) {
   const um = /^\/api\/users\/(\d+)$/.exec(p);
   if (um && M === 'GET') {
     const u = q('SELECT * FROM users WHERE id = ?').get(Number(um[1])); if (!u) throw fail(404, 'Пользователь не найден');
-    const admin = isAdmin(me), visible = admin || canSee(me.id, u.id);   // администратор видит профиль целиком
+    const coach = isCoachOf(me.id, u.id), admin = isAdmin(me), visible = admin || coach || canSee(me.id, u.id);   // администратор и тренер видят профиль целиком
     const posts = q(`SELECT * FROM posts WHERE user_id = ? ${visible ? '' : "AND vis = 'public'"} ORDER BY id DESC LIMIT 120`).all(u.id).map(p => shapePost(p, me.id));
     const friendsCount = q(`SELECT COUNT(*) n FROM friends WHERE (a = ? OR b = ?) AND status = 'accepted'`).get(u.id, u.id).n;
-    return send(res, 200, { user: { ...pub(u), state: u.id === me.id ? 'self' : friendState(me.id, u.id), flame: u.id === me.id ? null : flame(me.id, u.id), summary: admin && u.id !== me.id && u.username !== BOT_USERNAME ? daySummary(u) : summaryFor(me.id, u),
+    return send(res, 200, { user: { ...pub(u), state: u.id === me.id ? 'self' : friendState(me.id, u.id), flame: u.id === me.id ? null : flame(me.id, u.id), summary: (admin || coach) && u.id !== me.id && u.username !== BOT_USERNAME ? daySummary(u) : summaryFor(me.id, u),
+      iCoach: coach, myCoach: isCoachOf(u.id, me.id),
       postsCount: q('SELECT COUNT(*) n FROM posts WHERE user_id = ?').get(u.id).n, friendsCount }, posts, visible });
   }
   if (p === '/api/posts' && M === 'POST') {
@@ -757,7 +797,7 @@ async function api(req, res, url) {
       }
       return send(res, 200, { state: friendState(me.id, other) });
     }
-    if (M === 'DELETE') { q('DELETE FROM friends WHERE a = ? AND b = ?').run(a, b); return send(res, 200, { state: 'none' }); }
+    if (M === 'DELETE') { q('DELETE FROM friends WHERE a = ? AND b = ?').run(a, b); q('DELETE FROM coaches WHERE (client_id = ? AND coach_id = ?) OR (client_id = ? AND coach_id = ?)').run(me.id, other, other, me.id); return send(res, 200, { state: 'none' }); }
   }
   const rm = /^\/api\/friends\/(\d+)\/restore$/.exec(p);
   if (rm && M === 'POST') {

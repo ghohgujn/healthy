@@ -1713,3 +1713,75 @@ html.no-select { overscroll-behavior: none; }
 .msg.theirs.col { align-items: flex-start; }
 .quote.quote-solo { width: auto; max-width: min(82%, 300px); margin: 0; padding: 6px 10px 6px 12px; background: var(--color-bub-theirs); color: var(--color-ink); box-shadow: 0 1px 1.5px oklch(0% 0 0 / 0.08); }
 .mine .quote.quote-solo { background: var(--color-bub-mine); color: var(--color-bub-mine-ink); }
+
+/* ===== v33: тренер ===== */
+.chat-top { grid-template-columns: 44px 40px minmax(0, 1fr) 44px; }
+.chat-more[hidden] { display: none; }
+/* меню действий */
+.action-sheet { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--space-md)); }
+.am-head { display: flex; align-items: center; gap: 12px; padding: var(--space-md) var(--space-lg) var(--space-sm); }
+.am-head .avatar { width: 48px; height: 48px; flex: none; }
+.am-head b { display: block; font-size: 18px; }
+.am-head small { color: var(--color-muted); font-size: var(--text-sm); }
+.am-list { display: grid; padding: 0 var(--space-sm); }
+.am-item { display: flex; align-items: flex-start; gap: 14px; padding: 12px; border: 0; background: none; text-align: left; border-radius: 16px; color: var(--color-ink); }
+.am-item:active { background: var(--color-paper-2); }
+.am-item b { display: block; font-size: 16px; }
+.am-item small { display: block; margin-top: 2px; color: var(--color-muted); font-size: var(--text-sm); line-height: 1.4; }
+.am-ico { flex: none; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--color-paper-2); }
+.am-ico svg { width: 20px; height: 20px; }
+.am-item[data-act="coach"] .am-ico { background: var(--color-ok); color: oklch(100% 0 0); }
+.am-item.danger b { color: var(--color-danger); }
+.am-cancel { width: calc(100% - 2 * var(--space-lg)); margin: var(--space-sm) var(--space-lg) 0; }
+/* бейдж роли в профиле */
+.role-badge { margin-left: 8px; padding: 2px 9px; border-radius: 99px; background: var(--color-ok); color: oklch(100% 0 0); font-size: 12px; font-weight: 700; vertical-align: 3px; }
+.role-badge.coach { background: var(--color-ink); color: var(--color-on-ink); }
+/* подопечные в «Чатах» */
+.cl-list { display: grid; gap: 4px; margin-bottom: var(--space-sm); }
+.cl-row { display: grid; grid-template-columns: 48px minmax(0, 1fr) 20px; gap: 12px; align-items: center; padding: 8px 6px; border: 0; border-radius: 16px; background: var(--color-card); box-shadow: var(--shadow-card); text-align: left; }
+.cl-row .avatar { width: 48px; height: 48px; }
+.cl-main { display: grid; gap: 3px; min-width: 0; }
+.cl-main b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-main small { color: var(--color-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-bar { height: 5px; border-radius: 99px; background: var(--color-paper-3); overflow: hidden; }
+.cl-bar i { display: block; height: 100%; border-radius: inherit; background: var(--color-ink-2); }
+.cl-bar i.ok { background: var(--color-ok); } .cl-bar i.over { background: var(--color-danger); }
+.cl-chev { width: 18px; height: 18px; color: var(--color-muted); }
+/* дневник подопечного */
+.cd { margin: var(--space-md) 0; display: grid; gap: var(--space-sm); }
+.cd-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
+.cd-seg { grid-template-columns: repeat(3, auto); }
+.cd-seg button { padding: 0 10px; min-height: 36px; }
+.cd-load { display: grid; place-items: center; padding: var(--space-lg) 0; }
+.cd-sum { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.cd-tile { display: grid; gap: 2px; padding: 10px; border-radius: 14px; background: var(--color-card); box-shadow: var(--shadow-card); min-width: 0; }
+.cd-tile small { font-size: 11px; font-weight: 700; color: var(--color-muted); }
+.cd-tile b { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.cd-tile span { font-size: 11px; color: var(--color-muted); line-height: 1.3; }
+.cd-days { display: grid; gap: var(--space-sm); }
+.cd-day { padding: 12px; border-radius: var(--radius-card); background: var(--color-card); box-shadow: var(--shadow-card); }
+.cd-day header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.cd-day header b { font-size: 16px; text-transform: capitalize; }
+.cd-k { font-size: var(--text-sm); font-weight: 700; color: var(--color-muted); font-variant-numeric: tabular-nums; }
+.cd-k.ok { color: var(--color-ok); } .cd-k.over { color: var(--color-danger); } .cd-k.under { color: var(--color-streak); }
+.cd-macro { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 6px 0 4px; font-size: 12px; color: var(--color-ink-2); }
+.cd-macro span::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 4px; border-radius: 50%; background: var(--c, transparent); vertical-align: 1px; }
+.cd-macro .cd-w::before { display: none; }
+.cd-w { display: inline-flex; align-items: center; gap: 3px; }
+.cd-w svg { width: 13px; height: 13px; }
+.cd-meals { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 8px; }
+.cd-meals li { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 10px; align-items: start; }
+.cd-ph { width: 56px; height: 56px; padding: 0; border: 0; border-radius: 12px; overflow: hidden; background: var(--color-paper-3); display: grid; place-items: center; color: var(--color-muted); transition: width 220ms var(--ease-out), height 220ms var(--ease-out); }
+.cd-ph img { width: 100%; height: 100%; object-fit: cover; }
+.cd-ph svg { width: 22px; height: 22px; }
+.cd-ph.zoom { width: min(100%, 260px); height: auto; aspect-ratio: 1; grid-column: 1 / -1; }
+.cd-meals li:has(.cd-ph.zoom) { grid-template-columns: 1fr; }
+.cd-mn { display: flex; justify-content: space-between; gap: 8px; margin: 0; }
+.cd-mn b { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cd-mn span { flex: none; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cd-meals small { display: block; font-size: 12px; color: var(--color-muted); line-height: 1.35; }
+.cd-items { margin-top: 2px; }
+.cd-sync { text-align: center; }
+@media (max-width: 360px) { .cd-sum { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.chat-top.uv-top { grid-template-columns: 44px minmax(0, 1fr); }
+.cd-noph { font-weight: 800; font-size: 20px; color: var(--color-ink-2); }

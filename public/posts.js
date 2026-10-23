@@ -69,7 +69,7 @@
   /* ---------- чужой профиль ---------- */
   const uv = $('#userView');
   let uvId = null;
-  async function openUser(id) {
+  async function openUser(id, toDiary) {
     const me = S().me; if (!me) return;
     if (id === me.id) { HF.closeDialog(uv); HF.showTab('profile'); return; }
     uvId = id; $('#uvBody').innerHTML = '<div class="uv-loading"><div class="scan"></div></div>'; $('#uvHandle').textContent = '';
@@ -82,16 +82,18 @@
           ${avaHTML(u, 'uv-ava')}
           <div class="uv-stats"><span><b>${u.postsCount}</b>${plural(u.postsCount, 'публикация', 'публикации', 'публикаций')}</span><span><b>${u.friendsCount}</b>${plural(u.friendsCount, 'друг', 'друга', 'друзей')}</span><span><b>${u.stats?.streak || 0}</b>серия</span></div>
         </div>
-        <p class="uv-name">${esc(u.name)} ${S().flameBadge(u.flame)}</p>
+        <p class="uv-name">${esc(u.name)} ${S().flameBadge(u.flame)}${u.iCoach ? '<span class="role-badge">подопечный</span>' : u.myCoach ? '<span class="role-badge coach">ваш тренер</span>' : ''}</p>
         ${u.bio ? `<p class="uv-bio">${esc(u.bio)}</p>` : ''}
         ${u.summary ? summaryCard(u) : ''}
         <div class="uv-actions">
           <button class="btn btn-${act[1]} btn-sm" id="uvFriend" ${act[2] ? 'disabled' : ''}>${act[0]}</button>
           ${u.state === 'friends' ? '<button class="btn btn-primary btn-sm" id="uvChat">Написать</button>' : ''}
         </div>
+        ${u.iCoach || (S().me?.admin && u.id !== S().me.id) ? '<section class="cd" id="coachDiary"></section>' : ''}
         <div class="uv-grid">${r.posts.length ? grid(r.posts, '') + (!r.visible && u.postsCount > r.posts.length ? '<p class="sub small grid-note">Остальные публикации видят только друзья</p>' : '')
           : r.visible || !u.postsCount ? grid([], 'Пока нет публикаций') : '<div class="grid-empty"><svg><use href="#i-grid"/></svg><p>Публикации видны только друзьям</p></div>'}</div>`;
       bindGrid($('#uvBody'));
+      if ($('#coachDiary')) { renderDiary(u, cdDays); if (toDiary) setTimeout(() => $('#coachDiary')?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 350); }
       $('#uvChat')?.addEventListener('click', () => { HF.closeDialog(uv); S().openChat(u); });
       $('#uvFriend').onclick = async () => {
         if (u.state === 'friends') {
@@ -102,6 +104,53 @@
         catch (e) { HF.toast(e.message); }
       };
     } catch (e) { $('#uvBody').innerHTML = `<p class="sub uv-err">${esc(e.message)}</p>`; }
+  }
+
+  /* ---------- дневник подопечного (видит тренер): итоги периода и каждый день — еда с фото, вода, активность, вес ---------- */
+  let cdDays = 7;
+  const lit = ml => String(Math.round((ml || 0) / 100) / 10).replace('.', ',');
+  const dayName = k => { const t = new Date(), y = new Date(t.getFullYear(), t.getMonth(), t.getDate() - 1), kk = d => HF.keyOf(d);
+    return k === kk(t) ? 'Сегодня' : k === kk(y) ? 'Вчера' : new Date(k + 'T12:00').toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' }); };
+  async function renderDiary(u, n) {
+    const box = $('#coachDiary'); if (!box) return;
+    box.innerHTML = `<div class="cd-head"><h2 class="h2">Дневник</h2><div class="seg cd-seg" role="radiogroup" aria-label="Период">${[7, 14, 30].map(d => `<button role="radio" data-cd="${d}" aria-checked="${d === n}">${d} дн.</button>`).join('')}</div></div><div class="cd-load"><div class="scan"></div></div>`;
+    box.querySelectorAll('[data-cd]').forEach(b => b.onclick = () => { cdDays = +b.dataset.cd; renderDiary(u, cdDays); });
+    let d; try { d = await api(`/api/users/${u.id}/diary?days=${n}`); } catch (e) { box.querySelector('.cd-load').outerHTML = `<p class="sub">${esc(e.message)}</p>`; return; }
+    if (!$('#coachDiary')) return;
+    const st = d.settings || {}, prof = d.profile || {}, rows = [];
+    const now = new Date();
+    for (let i = 0; i < n; i++) {
+      const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i), k = HF.keyOf(dt), v = d.days[k] || { meals: [], water: 0, acts: [] }, h = d.health?.[k] || {};
+      let bonus = 0; try { bonus = HFCalc.dayBonus({ ...prof, weight: +prof.weight || 75 }, v.acts || [], v.steps || h.steps || 0, h.active_kcal || 0).kcal; } catch {}
+      const meals = (v.meals || []).slice().sort((a, b) => a.time - b.time).map(m => ({ ...m, t: HF.mealTotals(m.items || []) }));
+      const tot = meals.reduce((a, m) => ({ kcal: a.kcal + m.t.kcal, p: a.p + m.t.p, f: a.f + m.t.f, c: a.c + m.t.c }), { kcal: 0, p: 0, f: 0, c: 0 });
+      rows.push({ k, meals, tot, goal: (+st.goal || 2000) + bonus, water: v.water || 0, acts: (v.acts || []).length, today: i === 0 });
+    }
+    const done = rows.filter(r => r.meals.length && (!r.today || r.tot.kcal >= r.goal * 0.7)), avg = f => done.length ? done.reduce((a, r) => a + f(r), 0) / done.length : 0;
+    const inNorm = done.filter(r => Math.abs(r.tot.kcal - r.goal) <= r.goal * 0.1).length;
+    const ws = (d.weights || []).filter(w => w.date >= rows[rows.length - 1].k), wLast = (d.weights || []).at(-1), wd = ws.length > 1 ? Math.round((ws.at(-1).kg - ws[0].kg) * 10) / 10 : null;
+    const tile = (l, v, sub) => `<div class="cd-tile"><small>${l}</small><b>${v}</b>${sub ? `<span>${sub}</span>` : ''}</div>`;
+    const sum = `<div class="cd-sum">
+      ${tile('В норме калорий', `${inNorm}/${done.length}`, 'дней ±10%')}
+      ${tile('Среднее', `${r0(avg(r => r.tot.kcal))}`, `ккал · цель ${r0(avg(r => r.goal)) || st.goal || '—'}`)}
+      ${tile('Белок', `${r0(avg(r => r.tot.p) / (+st.p || 120) * 100)}%`, `от ${st.p || 120} г`)}
+      ${tile('Вода', `${r0(rows.reduce((a, r) => a + Math.min(1.5, r.water / (+st.waterGoal || 2000)), 0) / n * 100)}%`, 'от нормы')}
+      ${tile('Тренировки', `${rows.reduce((a, r) => a + r.acts, 0)}`, `за ${n} дн.`)}
+      ${tile('Вес', wLast ? `${String(wLast.kg).replace('.', ',')}` : '—', wd !== null ? `${wd > 0 ? '+' : wd < 0 ? '−' : ''}${String(Math.abs(wd)).replace('.', ',')} кг за период${prof.target ? ` · цель ${prof.target}` : ''}` : prof.target ? `цель ${prof.target} кг` : 'не записан')}
+    </div>`;
+    const dayHTML = r => {
+      const ok = r.meals.length && Math.abs(r.tot.kcal - r.goal) <= r.goal * 0.1, over = r.tot.kcal > r.goal * 1.1;
+      return `<article class="cd-day"><header><b>${dayName(r.k)}</b><span class="cd-k ${r.meals.length ? ok ? 'ok' : over ? 'over' : 'under' : ''}">${r.meals.length ? `${r0(r.tot.kcal)} / ${r0(r.goal)} ккал` : 'нет записей'}</span></header>
+        ${r.meals.length ? `<p class="cd-macro"><span style="--c:var(--color-protein)">Б ${r0(r.tot.p)}</span><span style="--c:var(--color-fat)">Ж ${r0(r.tot.f)}</span><span style="--c:var(--color-carb)">У ${r0(r.tot.c)}</span><span class="cd-w"><svg><use href="#i-drop"/></svg>${lit(r.water)} л</span>${r.acts ? `<span class="cd-w"><svg><use href="#i-bolt"/></svg>${r.acts} трен.</span>` : ''}</p>
+        <ul class="cd-meals">${r.meals.map(m => `<li>${m.thumb ? `<button class="cd-ph" data-zoom aria-label="Фото: ${esc(m.name)}"><img src="${esc(m.thumb)}" alt="" loading="lazy"></button>` : `<span class="cd-ph cd-noph" aria-hidden="true">${esc((m.name || '?').charAt(0).toUpperCase())}</span>`}
+          <div><p class="cd-mn"><b>${esc(m.name)}</b><span>${r0(m.t.kcal)} ккал</span></p>
+          <small>${esc(m.type || '')} · ${new Date(m.time).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} · Б ${r0(m.t.p)} Ж ${r0(m.t.f)} У ${r0(m.t.c)}${(m.portion || 1) < 1 ? ` · съедено ${r0(m.portion * 100)}%` : ''}</small>
+          <small class="cd-items">${(m.items || []).map(i => `${esc(i.name)} ${r0(i.grams)} г`).join(', ')}</small></div></li>`).join('')}</ul>` : (r.water ? `<p class="cd-macro"><span class="cd-w"><svg><use href="#i-drop"/></svg>${lit(r.water)} л</span></p>` : '')}
+      </article>`;
+    };
+    box.querySelector('.cd-load').outerHTML = (d.synced ? '' : '<p class="sub">Подопечный ещё не синхронизировал дневник — данные появятся, когда он откроет приложение.</p>')
+      + sum + `<div class="cd-days">${rows.map(dayHTML).join('')}</div>` + (d.synced ? `<p class="sub small cd-sync">Обновлено ${new Date(d.synced).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>` : '');
+    box.querySelectorAll('[data-zoom]').forEach(b => b.onclick = () => b.classList.toggle('zoom'));
   }
   $('#uvBack').onclick = () => HF.closeDialog(uv); uv._back = () => HF.closeDialog(uv);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !uv.hidden && $('#postSheet').hidden) { e.stopPropagation(); HF.closeDialog(uv); } }, true);

@@ -189,6 +189,7 @@
         <div id="socialMain">
           <div class="friend-row" id="friendRow" aria-label="Друзья"></div>
           <div id="requests"></div>
+          <div id="clientsBox" hidden></div>
           <h2 class="h2 list-title">Сообщения</h2>
           <ul class="chat-list" id="chatList"></ul>
         </div>
@@ -442,6 +443,7 @@
       <button class="icon-btn" id="chatBack" aria-label="Назад"><svg><use href="#i-back"/></svg></button>
       <span class="avatar chat-ava" id="chatAva"></span>
       <div class="chat-who"><p class="chat-name" id="chatName"></p><p class="chat-sub" id="chatSub"></p></div>
+      <button class="icon-btn chat-more" id="chatMore" aria-label="Ещё: профиль, тренер"><svg><use href="#i-dots-v"/></svg></button>
     </header>
     <div class="chat-scroll" id="chatScroll">
       <div class="flame-banner" id="flameBanner" hidden></div>
@@ -595,6 +597,15 @@
   </div>
 
   <!-- Developer panel (5 taps on «О себе») -->
+  <div class="sheet-wrap" id="chatMenu" hidden>
+    <div class="scrim" data-close></div>
+    <section class="sheet action-sheet" role="dialog" aria-modal="true" aria-labelledby="cmTitle">
+      <div class="am-head"><span class="avatar" id="cmAva"></span><div><b id="cmTitle"></b><small id="cmSub"></small></div></div>
+      <div class="am-list" id="cmList"></div>
+      <button class="btn btn-ghost am-cancel" data-close>Закрыть</button>
+    </section>
+  </div>
+
   <div class="sheet-wrap" id="usersSheet" hidden>
     <div class="scrim" data-close></div>
     <section class="sheet users-sheet" role="dialog" aria-modal="true" aria-labelledby="usersTitle">

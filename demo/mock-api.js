@@ -96,9 +96,21 @@ window.HFMockApi = (() => {
       const shapeC = c => { const to = c.reply_to ? who(c.reply_to) : null;
         return { id: c.id, body: c.body || '', kind: c.kind || 'text', media: c.media || '', dur: c.dur || 0, created: c.created, parent: c.parent, replyTo: to && { id: to.id, name: to.name, username: to.username }, author: who(c.user_id), likes: c.likesBase + c.likers.size, liked: c.likers.has(1) }; };
       const um = /^\/api\/users\/(\d+)$/.exec(p);
+      const cmk = /^\/api\/coach\/(\d+)$/.exec(p);
+      if (cmk) { st.coaches = st.coaches || []; const id = +cmk[1]; st.coaches = M === 'POST' ? [...new Set([...st.coaches, id])] : st.coaches.filter(v => v !== id); return { coach: M === 'POST' }; }
+      if (p === '/api/clients') return { clients: (st.clients || [2]).map(id => ({ ...who(id), today: SUM[id] ? { kcal: SUM[id].kcal, goal: SUM[id].goal, meals: SUM[id].meals } : null })), coaches: (st.coaches || []).map(who) };
+      const dmk = /^\/api\/users\/(\d+)\/diary$/.exec(p);
+      if (dmk) { const n = +(u.searchParams.get('days') || 7), days = {}, now = new Date();
+        const menu = [['Овсянка с бананом', 'Завтрак', 8, [['Овсянка', 250, 110, 4, 2, 19], ['Банан', 120, 89, 1, 0, 23]]], ['Борщ со сметаной', 'Обед', 13, [['Борщ', 300, 55, 3, 3, 5], ['Сметана 15%', 30, 160, 3, 15, 3], ['Хлеб ржаной', 60, 210, 7, 1, 41]]],
+          ['Куриная грудка с гречкой', 'Ужин', 19, [['Куриная грудка', 160, 165, 31, 4, 0], ['Гречка', 200, 110, 4, 1, 21]]], ['Творог 5%', 'Перекус', 16, [['Творог 5%', 180, 121, 17, 5, 2]]]];
+        for (let i = 0; i < n; i++) { const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i), k = HF.keyOf(d); if (i % 5 === 3) continue;
+          days[k] = { water: 1250 + (i % 4) * 400, acts: i % 3 ? [] : [{ type: 'walk', level: 1, min: 40 }], meals: menu.filter((_, j) => (i + j) % 4 !== 3 || i === 0).map(([name, type, h, items], j) => ({ id: `${k}-${j}`, time: new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, 10).getTime(), type, name, thumb: '', portion: j === 1 && i === 1 ? 0.5 : 1,
+            items: items.map(([nm, g, kc, pp, f, c]) => ({ name: nm, role: 'food', fat: 'none', grams: g, kcal_100: kc, p_100: pp, f_100: f, c_100: c })) })) }; }
+        const w = []; for (let i = n; i >= 0; i -= 2) { const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i); w.push({ date: HF.keyOf(d), kg: Math.round((68.4 - (n - i) * 0.04) * 10) / 10 }); }
+        return { n, synced: Date.now() - 12 * 6e4, days, health: {}, weights: w, settings: { goal: 2100, p: 130, waterGoal: 2250 }, profile: { sex: 'f', weight: 68, target: 64, goal: 'lose_healthy' } }; }
       if (um) { const id = +um[1], x = who(id), visible = friendOk(id);
         const posts = st.posts.filter(q => q.user_id === id && (visible || q.vis === 'public')).sort((a, b) => b.created - a.created).map(shapeP);
-        return { user: { ...x, summary: st.fr[id] === 'friends' ? (SUM[id] || null) : null, state: id === 1 ? 'self' : st.fr[id] || 'none', postsCount: st.posts.filter(q => q.user_id === id).length, friendsCount: id === 1 ? users.filter(y => st.fr[y.id] === 'friends').length : 3 + id }, posts, visible }; }
+        return { user: { ...x, iCoach: (st.clients || [2]).includes(id), myCoach: (st.coaches || []).includes(id), summary: st.fr[id] === 'friends' ? (SUM[id] || null) : null, state: id === 1 ? 'self' : st.fr[id] || 'none', postsCount: st.posts.filter(q => q.user_id === id).length, friendsCount: id === 1 ? users.filter(y => st.fr[y.id] === 'friends').length : 3 + id }, posts, visible }; }
       if (p === '/api/feed') { const all = u.searchParams.get('scope') === 'all';
         return { posts: st.posts.filter(x => all ? vis(x) : friendOk(x.user_id)).sort((a, b) => b.created - a.created).map(shapeP) }; }
       if (p === '/api/posts' && M === 'POST') { const x = { id: ++st.id, user_id: 1, media: st.media[body.media], gallery: body.gallery?.length ? [st.media[body.media], ...body.gallery.map(g => st.media[g])] : [], caption: body.caption || '', meta: body.meta || {}, created: Date.now(), likers: new Set(), likesBase: 0, vis: body.vis === 'friends' ? 'friends' : 'public' }; st.posts.push(x); return { post: shapeP(x) }; }
