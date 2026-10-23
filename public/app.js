@@ -1151,7 +1151,8 @@
     const pick = () => { hide(); openVoice(); };
     const hit = (x, y) => { const r = vb.querySelector('.fv-ico').getBoundingClientRect(); return r.width > 0 && Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2)) < 44; };
     fab.addEventListener('pointerdown', e => {
-      if (e.button || open) return;
+      if (e.button) return;
+      if (open) { if (e.pointerType !== 'mouse') { hide(); suppressClick = true; setTimeout(() => { suppressClick = false; }, 500); } return; }
       document.documentElement.classList.add('no-select');   // долгое нажатие не выделяет текст на экране
       hold = { t: setTimeout(() => { hold.long = true; show(); }, 280) };
       try { fab.setPointerCapture(e.pointerId); } catch {}
@@ -1165,12 +1166,18 @@
     fab.addEventListener('pointerup', e => {
       document.documentElement.classList.remove('no-select');
       if (!hold) return; clearTimeout(hold.t); const h = hold; hold = null;
-      if (!h.long) return;                       // короткий тап — обычный click откроет камеру
+      if (!h.long) {                             // короткий тап — камера (на касаниях click подавлен ради жеста, открываем сами)
+        if (e.pointerType !== 'mouse') { suppressClick = true; setTimeout(() => { suppressClick = false; }, 500); if (open) hide(); else openCamera(); }
+        return;
+      }
       suppressClick = true; setTimeout(() => { suppressClick = false; }, 400);
       if (hit(e.clientX, e.clientY)) pick();
     });
     fab.addEventListener('pointercancel', () => { document.documentElement.classList.remove('no-select'); if (hold) { clearTimeout(hold.t); hold = null; } });
     fab.addEventListener('contextmenu', e => e.preventDefault());
+    // iOS: без этого движение пальца от кнопки прокручивает страницу и обрывает жест (pointercancel) — микрофон не выбрать
+    fab.addEventListener('touchstart', e => { if (e.touches.length === 1) e.preventDefault(); }, { passive: false });
+    fab.addEventListener('touchmove', e => { if (e.cancelable) e.preventDefault(); }, { passive: false });
     fab.onclick = () => { if (suppressClick) return; if (open) { hide(); return; } openCamera(); };
     vb.onclick = pick;
     document.addEventListener('pointerdown', e => { if (open && !e.target.closest('#fabVoice, #openCamera')) hide(); }, true);

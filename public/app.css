@@ -1702,3 +1702,6 @@ html.no-select, html.no-select * { -webkit-user-select: none !important; user-se
 .comment-form.rec-locked .rec-cancel-btn { display: inline-flex; align-items: center; margin-left: auto; }
 .comment-form.rec-locked .cmt-rec-hint { display: none; }
 .comment-form.rec-locked #cmtMain { transform: none; background: var(--color-ok); box-shadow: none; }
+/* кнопка камеры: жест «удержать и потянуть к микрофону» не должен прокручивать страницу */
+.fab, .fab-voice { touch-action: none; }
+html.no-select { overscroll-behavior: none; }
