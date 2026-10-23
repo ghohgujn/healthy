@@ -1695,3 +1695,10 @@ html.no-select, html.no-select * { -webkit-user-select: none !important; user-se
 .cmt.armed .cmt-swipe { background: var(--color-ink); color: var(--color-on-ink); }
 .cmt { -webkit-user-select: none; user-select: none; }
 .cmt-text { -webkit-user-select: text; user-select: text; }
+/* «без рук» в комментариях */
+.comment-form .rec-lockpill { right: calc(var(--space-md) + 2px); bottom: calc(100% + 30px); }
+.comment-form.rec-video .rec-lockpill { right: calc(var(--space-md) + 2px); }
+.comment-form .rec-cancel-btn { display: none; }
+.comment-form.rec-locked .rec-cancel-btn { display: inline-flex; align-items: center; margin-left: auto; }
+.comment-form.rec-locked .cmt-rec-hint { display: none; }
+.comment-form.rec-locked #cmtMain { transform: none; background: var(--color-ok); box-shadow: none; }

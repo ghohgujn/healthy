@@ -390,7 +390,8 @@
     };
     inp.addEventListener('input', paint); paint();
     const ui = on => {
-      form.classList.toggle('recording', on); form.classList.toggle('rec-video', on && R?.mode === 'video');
+      form.classList.toggle('recording', on); form.classList.toggle('rec-on', on); form.classList.toggle('rec-video', on && R?.mode === 'video');
+      if (!on) { form.classList.remove('rec-locked', 'rec-justlocked'); form.style.removeProperty('--lk'); btn.style.transform = ''; }
       $('#cmtRec').hidden = !on; inp.hidden = on; $('#cmtCircle').hidden = !(on && R?.mode === 'video');
       if (on) { $('#cmtRecTime').textContent = '0:00'; form.classList.remove('rec-cancel'); }
       if (!on) paint();
@@ -431,12 +432,29 @@
       try { r.mr.stop(); } catch { r.stream.getTracks().forEach(t => t.stop()); }
     }
     btn.addEventListener('pointerdown', e => {
+      if (R?.locked) { e.preventDefault(); finish(true); return; }   // записано «без рук» — тап отправляет
       if (inp.value.trim()) return;
       e.preventDefault(); try { btn.setPointerCapture(e.pointerId); } catch {}
-      press = { x: e.clientX, timer: setTimeout(() => { if (press) { press.held = true; start(); } }, 220) };
+      press = { x: e.clientX, y: e.clientY, timer: setTimeout(() => { if (press) { press.held = true; start(); } }, 220) };
     });
-    btn.addEventListener('pointermove', e => { if (!press?.held || !R) return; const c = e.clientX - press.x < -80; R.cancel = c; form.classList.toggle('rec-cancel', c); });
+    // без рук, как в чате: тянешь вверх — замок едет навстречу и защёлкивается, палец можно отпустить
+    const lock = () => {
+      if (!R || R.locked) return; R.locked = true; press = null; btn.style.transform = '';
+      form.classList.add('rec-locked', 'rec-justlocked'); form.style.setProperty('--lk', '1'); form.classList.remove('rec-cancel');
+      setTimeout(() => form.classList.remove('rec-justlocked'), 700); try { navigator.vibrate?.(20); } catch {}
+      btn.innerHTML = '<svg><use href="#i-send"/></svg>'; btn.setAttribute('aria-label', 'Остановить и отправить');
+    };
+    btn.addEventListener('pointermove', e => {
+      if (!press?.held || !R || R.locked) return;
+      const dx = Math.min(0, e.clientX - press.x), dy = Math.min(0, e.clientY - press.y), up = Math.abs(dy) > Math.abs(dx);
+      const lk = up ? Math.min(1, -dy / 90) : 0; form.style.setProperty('--lk', lk.toFixed(3));
+      btn.style.transform = `translate(${up ? 0 : Math.max(-100, dx) * 0.5}px, ${up ? Math.max(-90, dy) * 0.45 : 0}px) scale(1.3)`;
+      const c = !up && dx < -80; R.cancel = c; form.classList.toggle('rec-cancel', c);
+      if (lk >= 1) lock();
+    });
+    $('#cmtRecCancel').onclick = () => finish(false);
     btn.addEventListener('pointerup', () => {
+      if (R?.locked && !press) return;   // в режиме «без рук» отправка — по тапу (обрабатывается в pointerdown)
       if (!press) return; clearTimeout(press.timer); const p = press; press = null;
       if (!p.held) { mode = mode === 'voice' ? 'video' : 'voice'; try { localStorage.setItem('hf.cmtMode', mode); } catch {} paint(); HF.toast(mode === 'video' ? 'Кружок: удерживайте кнопку' : 'Голосовое: удерживайте кнопку'); return; }
       finish(!R?.cancel);

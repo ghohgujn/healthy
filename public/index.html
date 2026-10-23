@@ -534,8 +534,9 @@
       <form class="comment-form" id="commentForm">
         <div class="cmt-circle-rec" id="cmtCircle" hidden aria-hidden="true"><video id="cmtCircleVideo" playsinline muted autoplay></video></div>
         <input class="cmp-input" id="commentInput" maxlength="500" placeholder="Комментарий…" autocomplete="off" enterkeyhint="send" aria-label="Комментарий">
-        <div class="cmt-rec" id="cmtRec" hidden role="status"><span class="rec-dot" aria-hidden="true"></span><b id="cmtRecTime">0:00</b><span class="cmt-rec-hint"><svg aria-hidden="true"><use href="#i-back"/></svg>влево — отмена</span></div>
+        <div class="cmt-rec" id="cmtRec" hidden role="status"><span class="rec-dot" aria-hidden="true"></span><b id="cmtRecTime">0:00</b><span class="cmt-rec-hint"><svg aria-hidden="true"><use href="#i-back"/></svg>влево — отмена</span><button class="rec-cancel-btn" id="cmtRecCancel" type="button">Отмена</button></div>
         <button class="cmp-btn cmp-main" id="cmtMain" type="submit" aria-label="Отправить комментарий"><svg><use href="#i-send"/></svg></button>
+        <div class="rec-lockpill" id="cmtLock" aria-hidden="true"><svg class="lk-ico" viewBox="0 0 24 24"><path class="lk-shackle" d="M8 11V8a4 4 0 0 1 8 0v3"/><rect x="5" y="11" width="14" height="10" rx="2.5"/></svg><svg class="lk-chev"><use href="#i-chev"/></svg></div>
       </form>
     </section>
   </div>
