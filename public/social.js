@@ -539,7 +539,9 @@
       q.querySelector('b').textContent = m.reply.deleted ? 'Сообщение удалено' : m.reply.from === me.id ? 'Вы' : peer?.name || '';
       q.querySelector('span').textContent = m.reply.deleted ? '' : m.reply.text;
       q.onclick = e => { e.stopPropagation(); const o = document.querySelector(`.msg[data-id="${m.reply.id}"]`); if (o) { o.scrollIntoView({ block: 'center', behavior: 'smooth' }); o.classList.remove('flash'); void o.offsetWidth; o.classList.add('flash'); } };
-      const host = li.querySelector('.bubble, .circle-msg'); host?.prepend(q);
+      // цитата — всегда отдельной строкой во всю ширину пузыря; у кружка — над ним, а не внутри круга
+      const host = li.querySelector('.bubble, .circle-msg');
+      if (host?.classList.contains('circle-msg')) { li.classList.add('col'); q.classList.add('quote-solo'); li.insertBefore(q, host); } else host?.prepend(q);
     }
     li.insertAdjacentHTML('beforeend', '<span class="msg-swipe" aria-hidden="true"><svg><use href="#i-reply"/></svg></span>');
     bindSwipeReply(li, m);

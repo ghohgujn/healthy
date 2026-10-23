@@ -15,7 +15,10 @@ window.HFMockApi = (() => {
         { id: 4, from: 2, to: 1, kind: 'voice', body: '', media: '', meta: { dur: 14 }, created: t - 29e5 },
         { id: 5, from: 2, to: 1, kind: 'video', body: '', media: '', meta: { dur: 9 }, created: t - 28e5 },
         { id: 6, from: 1, to: 2, kind: 'text', body: 'Выглядит супер! Сколько белка вышло?', created: t - 27e5 },
-        { id: 7, from: 1, to: 2, kind: 'text', body: '🔥', created: t - 26.9e5 } ], media: {} };
+        { id: 7, from: 1, to: 2, kind: 'text', body: '🔥', created: t - 26.9e5 },
+        { id: 11, from: 2, to: 1, kind: 'voice', body: '', media: '', meta: { dur: 3 }, reply: { id: 6, from: 1, kind: 'text', text: 'Выглядит супер! Сколько белка вышло?' }, created: t - 26.8e5 },
+        { id: 12, from: 1, to: 2, kind: 'voice', body: '', media: '', meta: { dur: 5 }, reply: { id: 4, from: 2, kind: 'voice', text: '🎤 Голосовое сообщение' }, created: t - 26.7e5 },
+        { id: 13, from: 2, to: 1, kind: 'video', body: '', media: '', meta: { dur: 4 }, reply: { id: 12, from: 1, kind: 'voice', text: '🎤 Голосовое сообщение' }, created: t - 26.6e5 } ], media: {} };
     const pubU = u => ({ ...u, state: st.fr[u.id] || 'none' });
     return async (path, o) => {
       await new Promise(r => setTimeout(r, 120));

@@ -1705,3 +1705,11 @@ html.no-select, html.no-select * { -webkit-user-select: none !important; user-se
 /* кнопка камеры: жест «удержать и потянуть к микрофону» не должен прокручивать страницу */
 .fab, .fab-voice { touch-action: none; }
 html.no-select { overscroll-behavior: none; }
+
+/* цитата в голосовом — на всю ширину пузыря, плеер под ней (раньше цитата влезала в колонку кнопки и всё съезжало) */
+.bubble.voice .quote { grid-column: 1 / -1; margin-bottom: 4px; }
+.msg.col { flex-direction: column; gap: 4px; }
+.msg.mine.col { align-items: flex-end; }
+.msg.theirs.col { align-items: flex-start; }
+.quote.quote-solo { width: auto; max-width: min(82%, 300px); margin: 0; padding: 6px 10px 6px 12px; background: var(--color-bub-theirs); color: var(--color-ink); box-shadow: 0 1px 1.5px oklch(0% 0 0 / 0.08); }
+.mine .quote.quote-solo { background: var(--color-bub-mine); color: var(--color-bub-mine-ink); }
