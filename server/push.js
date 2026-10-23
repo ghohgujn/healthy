@@ -19,12 +19,17 @@ export function loadVapid(dir) {
   return { key: createPrivateKey({ key: jwk, format: 'jwk' }), publicKey: b64u(publicRaw) };
 }
 
+// JWT живёт 1 час (Apple и FCM строже относятся к долгим токенам), подпись кэшируем на 30 минут на каждый push-сервис
+const jwtCache = new Map();
 export function vapidHeader(vapid, endpoint, subject) {
-  const aud = new URL(endpoint).origin;
+  const aud = new URL(endpoint).origin, hit = jwtCache.get(aud), t = Math.floor(Date.now() / 1000);
+  if (hit && hit.until > t) return hit.value;
   const head = b64u(JSON.stringify({ typ: 'JWT', alg: 'ES256' }));
-  const body = b64u(JSON.stringify({ aud, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: subject }));
+  const body = b64u(JSON.stringify({ aud, exp: t + 3600, sub: subject }));
   const sig = sign('sha256', Buffer.from(`${head}.${body}`), { key: vapid.key, dsaEncoding: 'ieee-p1363' });
-  return `vapid t=${head}.${body}.${b64u(sig)}, k=${vapid.publicKey}`;
+  const value = `vapid t=${head}.${body}.${b64u(sig)}, k=${vapid.publicKey}`;
+  jwtCache.set(aud, { value, until: t + 1800 });
+  return value;
 }
 
 // RFC 8291: шифруем payload для подписки (p256dh, auth)
@@ -44,15 +49,22 @@ export function encrypt(payload, p256dh, auth, { salt = randomBytes(16), ecdh = 
   return Buffer.concat([salt, rs, Buffer.from([asPublic.length]), asPublic, ct]);
 }
 
-// Отправка; возвращает HTTP-статус push-сервиса (404/410 — подписка умерла)
-export async function sendPush(vapid, sub, data, subject) {
-  const body = encrypt(JSON.stringify(data), sub.p256dh, sub.auth);
+// Отправка; возвращает HTTP-статус push-сервиса (404/410 — подписка умерла).
+// Сетевой сбой, 429 и 5xx — один повтор через 2 секунды: такие пуши раньше просто терялись.
+async function postOnce(vapid, sub, body, subject) {
   const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), 15_000);
   try {
     const r = await fetch(sub.endpoint, { method: 'POST', signal: ctrl.signal, body, headers: {
       Authorization: vapidHeader(vapid, sub.endpoint, subject), 'Content-Encoding': 'aes128gcm',
       'Content-Type': 'application/octet-stream', TTL: '86400', Urgency: 'high' } });
-    if (!r.ok && r.status !== 404 && r.status !== 410) console.error('push', r.status, (await r.text()).slice(0, 200));
-    return r.status;
-  } catch (e) { console.error('push error', e.message); return 0; } finally { clearTimeout(t); }
+    const text = r.ok ? '' : (await r.text()).slice(0, 200);
+    return { code: r.status, text };
+  } catch (e) { return { code: 0, text: e.message }; } finally { clearTimeout(t); }
+}
+export async function sendPush(vapid, sub, data, subject) {
+  const body = encrypt(JSON.stringify(data), sub.p256dh, sub.auth);
+  let r = await postOnce(vapid, sub, body, subject);
+  if (r.code === 0 || r.code === 429 || r.code >= 500) { await new Promise(res => setTimeout(res, 2000)); r = await postOnce(vapid, sub, body, subject); }
+  if (r.code >= 300 || r.code === 0) console.error('push', r.code, new URL(sub.endpoint).host, r.text);
+  return r.code;
 }

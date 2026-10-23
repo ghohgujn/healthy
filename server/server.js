@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS health (user_id INTEGER NOT NULL, date TEXT NOT NULL,
 const stmts = new Map();
 const q = sql => { let st = stmts.get(sql); if (!st) { st = db.prepare(sql); stmts.set(sql, st); } return st; };
 // миграции: добавляем колонки, если их ещё нет
-for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER'], ['users', 'share_summary', 'INTEGER NOT NULL DEFAULT 1'], ['posts', 'gallery', 'TEXT'], ['comments', 'kind', "TEXT NOT NULL DEFAULT 'text'"], ['users', 'seen_at', 'INTEGER'], ['comments', 'media', 'TEXT'], ['comments', 'meta', 'TEXT']])
+for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER'], ['users', 'share_summary', 'INTEGER NOT NULL DEFAULT 1'], ['posts', 'gallery', 'TEXT'], ['comments', 'kind', "TEXT NOT NULL DEFAULT 'text'"], ['users', 'seen_at', 'INTEGER'], ['push_subs', 'sess', 'TEXT'], ['comments', 'media', 'TEXT'], ['comments', 'meta', 'TEXT']])
   if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${def}`);
 db.exec(`CREATE TABLE IF NOT EXISTS comment_likes (comment_id INTEGER NOT NULL, user_id INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (comment_id, user_id));
 CREATE INDEX IF NOT EXISTS posts_vis ON posts (vis, id);
@@ -170,12 +170,20 @@ async function saveReport(req, res) {
 const VAPID = loadVapid(DATA);
 const PUSH_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:healthyfit.app@gmail.com';
 const PUSH_HOSTS = /(^|\.)(push\.apple\.com|fcm\.googleapis\.com|googleapis\.com|push\.services\.mozilla\.com|notify\.windows\.com)$/;
-const chatOpen = new Map();   // "кто:с кем" → когда последний раз опрашивал открытый чат
+// Открытый чат: «пользователь:собеседник:сессия» → когда последний раз опрашивал. Сессия = устройство,
+// поэтому чат, открытый на компьютере, больше не глушит пуш на телефоне.
+const chatOpen = new Map();
+setInterval(() => { const t = now(); for (const [k, v] of chatOpen) if (t - v > 60_000) chatOpen.delete(k); }, 60_000).unref();
+const sessOf = req => { const t = cookieToken(req); return t ? sha(t) : ''; };
 function notify(userId, data, skipIfChat) {
-  if (skipIfChat && now() - (chatOpen.get(`${userId}:${skipIfChat}`) || 0) < 8000) return;   // чат открыт — пуш не нужен
+  const t = now(), openOn = sess => t - (chatOpen.get(`${userId}:${skipIfChat}:${sess}`) || 0) < 6000;
+  const anyOpen = () => [...chatOpen].some(([k, v]) => k.startsWith(`${userId}:${skipIfChat}:`) && t - v < 6000);
   for (const sub of q('SELECT * FROM push_subs WHERE user_id = ?').all(userId)) {
+    // этот же телефон прямо сейчас смотрит переписку — ему пуш не нужен; старые подписки без сессии — как раньше
+    if (skipIfChat && (sub.sess ? openOn(sub.sess) : anyOpen())) continue;
     sendPush(VAPID, sub, data, PUSH_SUBJECT).then(code => {
-      if (code === 404 || code === 410 || code === 403) q('DELETE FROM push_subs WHERE endpoint = ?').run(sub.endpoint);
+      // удаляем только по «подписки больше нет» (404/410); 403 и прочее бывает временно — подписку не трогаем
+      if (code === 404 || code === 410) q('DELETE FROM push_subs WHERE endpoint = ?').run(sub.endpoint);
     });
   }
 }
@@ -515,8 +523,9 @@ async function api(req, res, url) {
     const b = await json(req, 8_000), ep = String(b.endpoint || ''), k = b.keys || {};
     let host = ''; try { const u = new URL(ep); if (u.protocol === 'https:') host = u.hostname; } catch {}
     if (!PUSH_HOSTS.test(host) || !k.p256dh || !k.auth) throw fail(400, 'Неверная подписка');
-    q(`INSERT INTO push_subs (endpoint, user_id, p256dh, auth, created) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT (endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth`).run(ep, me.id, String(k.p256dh), String(k.auth), now());
+    q(`INSERT INTO push_subs (endpoint, user_id, p256dh, auth, created, sess) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth, sess = COALESCE(excluded.sess, push_subs.sess)`)
+      .run(ep, me.id, String(k.p256dh), String(k.auth), now(), sessOf(req) || null);
     return send(res, 200, { ok: true });
   }
   if (p === '/api/push/unsubscribe' && M === 'POST') {
@@ -774,7 +783,7 @@ async function api(req, res, url) {
   if (cm) {
     const other = Number(cm[1]);
     if (M === 'GET') {
-      chatOpen.set(`${me.id}:${other}`, now());
+      chatOpen.set(`${me.id}:${other}:${sessOf(req)}`, now());
       const after = Number(url.searchParams.get('after') || 0);
       const rows = q(`SELECT * FROM messages WHERE ((sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)) AND id > ? ORDER BY id DESC LIMIT 200`)
         .all(me.id, other, other, me.id, after).reverse();

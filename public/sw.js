@@ -30,3 +30,15 @@ self.addEventListener('notificationclick', e => {
     await self.clients.openWindow(url);
   })());
 });
+
+// push-сервис сменил подписку (бывает на iOS и Android) — сразу оформляем новую и сообщаем серверу, иначе пуши молча пропадут
+self.addEventListener('pushsubscriptionchange', e => {
+  e.waitUntil((async () => {
+    try {
+      const { key } = await (await fetch('/api/push/key', { credentials: 'same-origin' })).json();
+      const raw = atob(key.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - key.length % 4) % 4));
+      const sub = e.newSubscription || await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: Uint8Array.from(raw, c => c.charCodeAt(0)) });
+      await fetch('/api/push/subscribe', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sub.toJSON()) });
+    } catch {}
+  })());
+});

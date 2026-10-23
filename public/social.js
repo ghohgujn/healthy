@@ -63,7 +63,7 @@
     // имя из аккаунта, если в профиле на телефоне его ещё нет
     if (me && !HF.db.profile.name && me.name) { HF.db.profile.name = me.name; HF.save(); HF.render(); }
     renderAuth(); renderAccountCard(); renderHealthCard();
-    if (me) { await refreshSocial(); pullHealth(); restoreIfEmpty(); syncPush(); route(); }
+    if (me) { await refreshSocial(); pullHealth(); restoreIfEmpty(); syncPush(true); route(); }
     renderPushUI();
   }
   function renderAuth() {
@@ -849,10 +849,21 @@
     renderPushUI();
   }
   // при каждом входе напоминаем серверу о подписке этого устройства (после смены аккаунта, переустановки и т.п.)
-  async function syncPush() {
+  // Разрешение есть, а подписки нет (iOS иногда тихо её отзывает) — подписываемся заново, без вопросов человеку.
+  // Вызываем при запуске и при каждом возвращении в приложение (iOS не перезапускает его днями).
+  let pushSyncedAt = 0;
+  async function syncPush(force) {
     if (!me || mock || !pushSupported || Notification.permission !== 'granted') return;
-    try { const sub = await (await swReady()).pushManager.getSubscription(); if (sub) await api('/api/push/subscribe', { method: 'POST', body: sub.toJSON() }); } catch {}
+    if (!force && Date.now() - pushSyncedAt < 10 * 60_000) return;
+    pushSyncedAt = Date.now();
+    try {
+      const reg = await swReady();
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) { const { key } = await api('/api/push/key'); sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(key) }); }
+      await api('/api/push/subscribe', { method: 'POST', body: sub.toJSON() });
+    } catch (e) { pushSyncedAt = 0; logError('push-sync', e); }
   }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) syncPush(); });
   window.HFPushSync = syncPush;
   async function dropPush() {
     if (mock || !pushSupported) return;
@@ -886,7 +897,7 @@
         <button class="btn btn-ghost btn-sm" id="pushTest"${st === 'on' ? '' : ' hidden'}>Проверить</button></div>`;
       $('#pushOn')?.addEventListener('click', enablePush);
       $('#pushTest')?.addEventListener('click', async () => {
-        try { await syncPush(); const r = await api('/api/push/test', { method: 'POST' });
+        try { await syncPush(true); const r = await api('/api/push/test', { method: 'POST' });
           HF.toast(r.devices ? `Отправили тестовое уведомление на ${r.devices} ${plural(r.devices, 'устройство', 'устройства', 'устройств')} — придёт через пару секунд` : 'Это устройство не подписано — нажмите «Подключить»'); }
         catch (e) { HF.toast(e.message); } });
     }
