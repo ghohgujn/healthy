@@ -593,7 +593,7 @@ const MEDIA_TYPES = {
   'audio/webm': { ext: '.webm', max: 3e6 }, 'audio/mp4': { ext: '.m4a', max: 3e6 }, 'audio/ogg': { ext: '.ogg', max: 3e6 }, 'audio/aac': { ext: '.aac', max: 3e6 },
   'video/webm': { ext: '.webm', max: 25e6 }, 'video/mp4': { ext: '.mp4', max: 25e6 },
 };
-const UPLOAD_DAY = Number(process.env.UPLOAD_DAY_MB || 300) * 1e6;
+const UPLOAD_DAY = Number(process.env.UPLOAD_DAY_MB || 200) * 1e6;
 // раз в час: файлы, загруженные больше суток назад и так ни к чему не привязанные (отменили отправку, закрыли приложение), — удаляем
 async function sweepMedia() {
   try {
@@ -990,8 +990,8 @@ async function api(req, res, url) {
     if (!m || !m.type.startsWith('image/')) throw fail(400, 'Нужна фотография');
     const x = b.meta && typeof b.meta === 'object' ? b.meta : {};
     const meta = JSON.stringify({ title: String(x.title || '').slice(0, 80), kcal: num(x.kcal), p: num(x.p), f: num(x.f), c: num(x.c),
-      items: (Array.isArray(x.items) ? x.items : []).slice(0, 12).map(i => ({ name: String(i.name || '').slice(0, 40), grams: num(i.grams) })),
-      ...(Array.isArray(x.meals) && x.meals.length ? { day: true, meals: x.meals.slice(0, 10).map(i => ({ title: String(i.title || '').slice(0, 80), kcal: num(i.kcal), p: num(i.p), f: num(i.f), c: num(i.c), time: String(i.time || '').slice(0, 5) })) } : {}) });
+      items: objs(x.items).slice(0, 12).map(i => ({ name: String(i.name || '').slice(0, 40), grams: num(i.grams) })),
+      ...(objs(x.meals).length ? { day: true, meals: objs(x.meals).slice(0, 10).map(i => ({ title: String(i.title || '').slice(0, 80), kcal: num(i.kcal), p: num(i.p), f: num(i.f), c: num(i.c), time: String(i.time || '').slice(0, 5) })) } : {}) });
     // мультипост «мой день»: до 10 фото, у каждого — своя карточка блюда в meta.meals
     const gal = (Array.isArray(b.gallery) ? b.gallery : []).slice(0, 9).map(String).filter(id => id !== m.id && q('SELECT 1 FROM media WHERE id = ? AND owner = ? AND type LIKE ?').get(id, me.id, 'image/%'));
     const r = q('INSERT INTO posts (user_id, media, caption, meta, created, vis, gallery) VALUES (?, ?, ?, ?, ?, ?, ?)').run(me.id, m.id, String(b.caption || '').slice(0, 500), meta, now(), b.vis === 'friends' ? 'friends' : 'public', gal.length ? JSON.stringify(gal) : null);
@@ -1167,7 +1167,7 @@ async function api(req, res, url) {
       } else if (b.meta && typeof b.meta === 'object') {
         const x = b.meta;
         meta = JSON.stringify({ title: String(x.title || '').slice(0, 80), kcal: num(x.kcal), p: num(x.p), f: num(x.f), c: num(x.c),
-          items: (Array.isArray(x.items) ? x.items : []).slice(0, 12).map(i => ({ name: String(i.name || '').slice(0, 40), grams: num(i.grams) })),
+          items: objs(x.items).slice(0, 12).map(i => ({ name: String(i.name || '').slice(0, 40), grams: num(i.grams) })),
           dur: Math.min(600, num(x.dur)) });
       }
       // ответ на сообщение — только из этой же переписки
