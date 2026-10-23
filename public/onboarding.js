@@ -236,7 +236,8 @@
       $('#devAi').innerHTML = !r.runs ? 'Пока не было распознаваний после перезапуска сервера.' :
         `Обычно <b>${sec(r.p50)}</b>, медленные — <b>${sec(r.p95)}</b> (последние ${Math.min(50, r.runs)}). Фото ≈ ${r.kb} КБ, загрузка ${r.upload} мс.<br>
         Токены: ответ ≈ ${r.out}, из них «размышления» ≈ ${r.reasoning} · уровень размышлений: <b>${esc(r.effort)}</b> · лимит ${r.maxTokens}.<br>
-        Сегодня распознаваний: ${r.today} · ошибок: ${r.fails} · пользователей: ${r.users}`;
+        Сегодня распознаваний: ${r.today} · ошибок: ${r.fails} · выручила запасная модель: ${r.fallbacks || 0} · пользователей: ${r.users}`
+        + ((r.errors || []).length ? `<br><b>Последние ошибки:</b><br>${r.errors.map(x => `${new Date(x.at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} · ${esc(x.model.split('/').pop())} · ${sec(x.ms)} · ${esc(x.why || '')}`).join('<br>')}` : '');
     }).catch(e => { $('#devAi').textContent = e.message; });
   }
   $('#devOnboard').onclick = () => { HF.closeDialog($('#devSheet')); open(true); };

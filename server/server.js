@@ -333,7 +333,9 @@ function clean(j) {
 // Скорость: модель «рассуждает» перед ответом — для оценки еды по фото хватает низкого уровня.
 // Если ProxyAPI/модель не примет параметр, один раз откатываемся без него и запоминаем (без серии 4xx).
 let REASONING = (process.env.AI_REASONING || 'low').toLowerCase();   // low | medium | high | off
-const AI_MAX_TOKENS = Number(process.env.AI_MAX_TOKENS || 2500);
+const AI_MAX_TOKENS = Number(process.env.AI_MAX_TOKENS || 4000);   // с запасом: «размышления» модели тоже тратят этот лимит, иначе ответ обрывается пустым
+const AI_HEDGE_MS = Number(process.env.AI_HEDGE_MS || 15000);     // столько ждём основную модель, потом параллельно спрашиваем запасную
+const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 42000); // общий потолок ожидания ответа
 const AI_BASE = (process.env.AI_BASE_URL || 'https://api.proxyapi.ru/v1').replace(/\/$/, '');
 const aiStats = [];   // последние 200 распознаваний: время, размер фото, токены — для админа
 function aiBody(model, caption, image, withReasoning) {
@@ -355,38 +357,65 @@ async function analyze(req, res) {
   const d = new Date().toISOString().slice(0, 10); if (d !== aiDay) { aiDay = d; aiCount = 0; }
   if (++aiCount > AI_DAILY) { console.error('AI daily limit reached'); throw fail(503, 'Сегодня лимит распознаваний исчерпан. Попробуйте завтра.'); }
   const tIn = now();
-  const failStat = (why, ms) => { aiStats.push({ at: now(), model: String(body?.model || ''), ms, ok: false, why, kb: 0, upload_ms: 0, prompt: 0, out: 0, reasoning: 0, effort: REASONING }); if (aiStats.length > 200) aiStats.shift(); };
-  let body;
-  body = await json(req, 4_000_000);
+  const body = await json(req, 4_000_000);
   const image = String(body.image || '');
   const caption = String(body.caption || '').replace(/[<>]/g, '').slice(0, image ? 300 : 1000);
   if (image && (!/^data:image\/(jpeg|png|webp);base64,/.test(image) || image.length > 3_000_000)) throw fail(400, 'Нужна фотография JPEG/PNG до ~2 МБ');
   if (!image && caption.trim().length < 2) throw fail(400, 'Опишите, что вы съели');
-  const model = MODELS[body.model] || MODELS.fast;
-  const t0 = now(), ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 50_000);
-  let r, usedReasoning = REASONING !== 'off' && /^openai\//.test(model.id);   // параметр уходит только моделям OpenAI
-  try {
-    r = await callAI(aiBody(model, caption, image, true), ctrl.signal);
-    if (r.status === 400 && usedReasoning) {
-      const txt = await r.text();
-      if (/reasoning/i.test(txt)) { console.error('reasoning_effort не поддерживается — выключаю'); REASONING = 'off'; usedReasoning = false; r = await callAI(aiBody(model, caption, image, false), ctrl.signal); }
-      else { console.error('proxyapi 400', txt.slice(0, 300)); throw fail(502, 'Не получилось распознать. Попробуйте ещё раз.'); }
-    }
-  } catch (e) { failStat(e.public ? 'http 400' : 'timeout', now() - t0); if (e.public) throw e; throw fail(504, 'Нейросеть не ответила. Попробуйте ещё раз.'); } finally { clearTimeout(timer); }
-  if (!r.ok) failStat('http ' + r.status, now() - t0);
-  // 4xx не повторяем: ProxyAPI ставит ключ на паузу после 20 ошибок в минуту
-  if (r.status === 402) { console.error('proxyapi 402: пополните баланс'); throw fail(503, 'Сервис временно недоступен. Попробуйте позже.'); }
-  if (r.status === 429) throw fail(429, 'Очередь занята. Попробуйте через минуту.');
-  if (!r.ok) { console.error('proxyapi', r.status, (await r.text()).slice(0, 300)); throw fail(502, 'Не получилось распознать. Попробуйте ещё раз.'); }
-  const data = await r.json().catch(() => null);
-  const m = String(data?.choices?.[0]?.message?.content || '').match(/\{[\s\S]*\}/);
-  let parsed = null; try { parsed = m ? JSON.parse(m[0]) : null; } catch {}
-  const u = data?.usage || {}, stat = { at: now(), model: model.id, ms: now() - t0, upload_ms: t0 - tIn, kb: Math.round(image.length * 0.75 / 1024),
-    prompt: u.prompt_tokens || 0, out: u.completion_tokens || 0, reasoning: u.completion_tokens_details?.reasoning_tokens || 0, effort: usedReasoning ? REASONING : 'off', ok: Boolean(parsed) };
-  aiStats.push(stat); if (aiStats.length > 200) aiStats.shift();
-  console.log(`analyze ${model.id} ${stat.ms}ms upload=${stat.upload_ms}ms ${stat.kb}KB tokens in=${stat.prompt} out=${stat.out} reasoning=${stat.reasoning} effort=${stat.effort}`);
-  if (!parsed) throw fail(502, 'Нейросеть ответила непонятно. Попробуйте ещё раз.');
-  send(res, 200, { ...clean(parsed), model: model.label, ms: stat.ms });
+  const primary = MODELS[body.model] || MODELS.fast, backup = primary === MODELS.gemini ? MODELS.fast : MODELS.gemini;
+  const t0 = now();
+  // одна попытка у одной модели: никогда не бросает, всегда возвращает итог — так их удобно гонять наперегонки
+  async function attempt(model, signal) {
+    const ta = now(); let usedReasoning = REASONING !== 'off' && /^openai\//.test(model.id);
+    try {
+      let r = await callAI(aiBody(model, caption, image, true), signal);
+      if (r.status === 400 && usedReasoning) {
+        const txt = await r.text();
+        if (!/reasoning/i.test(txt)) return { model, status: 400, why: txt.slice(0, 200), ms: now() - ta };
+        console.error('reasoning_effort не поддерживается — выключаю'); REASONING = 'off'; usedReasoning = false;
+        r = await callAI(aiBody(model, caption, image, false), signal);
+      }
+      if (!r.ok) return { model, status: r.status, why: (await r.text().catch(() => '')).slice(0, 200), ms: now() - ta };
+      const data = await r.json().catch(() => null), ch = data?.choices?.[0];
+      const m = String(ch?.message?.content || '').match(/\{[\s\S]*\}/);
+      let parsed = null; try { parsed = m ? JSON.parse(m[0]) : null; } catch {}
+      if (!parsed) return { model, status: 200, bad: true, why: `пустой/битый ответ, finish=${ch?.finish_reason || '?'}`, ms: now() - ta, usage: data?.usage };
+      return { model, ok: true, parsed, usage: data?.usage || {}, usedReasoning, ms: now() - ta };
+    } catch (e) { return { model, status: 0, why: e.name === 'AbortError' ? 'нет ответа (таймаут)' : `сеть: ${e.message}`, ms: now() - ta }; }
+  }
+  // основная модель; если молчит дольше AI_HEDGE_MS или ошиблась — параллельно спрашиваем запасную, берём первый годный ответ
+  const cA = new AbortController(), cB = new AbortController();
+  const deadline = setTimeout(() => { cA.abort(); cB.abort(); }, AI_TIMEOUT_MS);
+  const pA = attempt(primary, cA.signal);
+  let hedgeT; const hedge = new Promise(r => { hedgeT = setTimeout(() => r(null), AI_HEDGE_MS); });
+  const fails = [];
+  let res0 = await Promise.race([pA, hedge]); clearTimeout(hedgeT);
+  if (res0 && !res0.ok) fails.push(res0);
+  if (!res0?.ok && !(res0 && (res0.status === 402 || res0.status === 429))) {   // баланс и лимит ключа общие — запасная не поможет
+    const pB = attempt(backup, cB.signal), list = res0 ? [pB] : [pA, pB];
+    res0 = await new Promise(done => { let left = list.length; for (const p of list) p.then(r => { if (r.ok) done(r); else { if (!fails.includes(r)) fails.push(r); if (--left === 0) done(null); } }); });
+  }
+  clearTimeout(deadline);
+  if (res0?.ok) (res0.model === primary ? cB : cA).abort();   // проигравшего не ждём и не оплачиваем дальше
+  for (const f of fails) {
+    console.error(`analyze FAIL ${f.model.id} status=${f.status} ${f.ms}ms ${f.why}`);
+    aiStats.push({ at: now(), model: f.model.id, ms: f.ms, ok: false, why: `${f.status ? 'http ' + f.status : ''} ${f.why}`.trim(), kb: Math.round(image.length * 0.75 / 1024), upload_ms: t0 - tIn, prompt: f.usage?.prompt_tokens || 0, out: f.usage?.completion_tokens || 0, reasoning: f.usage?.completion_tokens_details?.reasoning_tokens || 0, effort: REASONING });
+  }
+  if (!res0?.ok) {
+    while (aiStats.length > 200) aiStats.shift();
+    const st = fails.map(f => f.status);
+    if (st.includes(402)) { console.error('proxyapi 402: пополните баланс'); throw fail(503, 'Сервис временно недоступен. Попробуйте позже.'); }
+    if (st.includes(429)) throw fail(429, 'Очередь занята. Попробуйте через минуту.');
+    if (st.every(x => x === 0)) throw fail(504, 'Нейросеть не ответила. Попробуйте ещё раз.');
+    if (fails.some(f => f.bad)) throw fail(502, 'Нейросеть ответила непонятно. Попробуйте ещё раз.');
+    throw fail(502, 'Не получилось распознать. Попробуйте ещё раз.');
+  }
+  const { parsed, model, usage: u } = res0;
+  const stat = { at: now(), model: model.id, ms: now() - t0, upload_ms: t0 - tIn, kb: Math.round(image.length * 0.75 / 1024),
+    prompt: u.prompt_tokens || 0, out: u.completion_tokens || 0, reasoning: u.completion_tokens_details?.reasoning_tokens || 0, effort: res0.usedReasoning ? REASONING : 'off', ok: true, ...(model !== primary ? { fallback: true } : {}) };
+  aiStats.push(stat); while (aiStats.length > 200) aiStats.shift();
+  console.log(`analyze ${model.id}${stat.fallback ? ' (запасная)' : ''} ${stat.ms}ms upload=${stat.upload_ms}ms ${stat.kb}KB tokens in=${stat.prompt} out=${stat.out} reasoning=${stat.reasoning} effort=${stat.effort}`);
+  send(res, 200, { ...clean(parsed), model: model.label, ms: stat.ms, ...(stat.fallback ? { fallback: true } : {}) });
 }
 
 /* ---------------- media ---------------- */
@@ -680,7 +709,7 @@ async function api(req, res, url) {
     const pct = k => ms.length ? ms[Math.min(ms.length - 1, Math.floor(ms.length * k))] : 0, p50 = pct(0.5), p95 = pct(0.95);
     const avg = k => last.length ? Math.round(last.reduce((a, x) => a + x[k], 0) / last.length) : 0;
     return send(res, 200, { runs: aiStats.length, fails: aiStats.length - okRuns.length, p50, p95, upload: avg('upload_ms'), kb: avg('kb'), reasoning: avg('reasoning'), out: avg('out'),
-      effort: REASONING, maxTokens: AI_MAX_TOKENS, users: q('SELECT COUNT(*) n FROM users').get().n, today: aiCount, last: aiStats.slice(-10).reverse() });
+      effort: REASONING, maxTokens: AI_MAX_TOKENS, fallbacks: aiStats.filter(x => x.fallback).length, errors: aiStats.filter(x => !x.ok).slice(-6).reverse().map(x => ({ at: x.at, model: x.model, ms: x.ms, why: x.why })), users: q('SELECT COUNT(*) n FROM users').get().n, today: aiCount, last: aiStats.slice(-10).reverse() });
   }
   const ar = /^\/api\/admin\/reports\/(\d+)$/.exec(p);
   if (ar && M === 'PATCH') {
