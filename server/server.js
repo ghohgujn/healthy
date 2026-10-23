@@ -6,7 +6,7 @@ import { readFile, writeFile, stat, mkdir, unlink } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { join, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
+import { randomBytes, scrypt, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { loadVapid, sendPush } from './push.js';
 import { createRequire } from 'node:module';
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS health (user_id INTEGER NOT NULL, date TEXT NOT NULL,
 const stmts = new Map();
 const q = sql => { let st = stmts.get(sql); if (!st) { st = db.prepare(sql); stmts.set(sql, st); } return st; };
 // миграции: добавляем колонки, если их ещё нет
-for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER'], ['users', 'share_summary', 'INTEGER NOT NULL DEFAULT 1'], ['posts', 'gallery', 'TEXT'], ['comments', 'kind', "TEXT NOT NULL DEFAULT 'text'"], ['users', 'seen_at', 'INTEGER'], ['push_subs', 'sess', 'TEXT'], ['comments', 'media', 'TEXT'], ['comments', 'meta', 'TEXT'], ['users', 'invite', 'TEXT'], ['users', 'og', 'TEXT'], ['users', 'ref_by', 'INTEGER'], ['posts', 'og', 'TEXT']])
+for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER'], ['users', 'share_summary', 'INTEGER NOT NULL DEFAULT 1'], ['posts', 'gallery', 'TEXT'], ['comments', 'kind', "TEXT NOT NULL DEFAULT 'text'"], ['users', 'seen_at', 'INTEGER'], ['push_subs', 'sess', 'TEXT'], ['comments', 'media', 'TEXT'], ['comments', 'meta', 'TEXT'], ['users', 'invite', 'TEXT'], ['users', 'tz', 'TEXT'], ['users', 'og', 'TEXT'], ['users', 'ref_by', 'INTEGER'], ['posts', 'og', 'TEXT']])
   if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${def}`);
 db.exec(`CREATE TABLE IF NOT EXISTS comment_likes (comment_id INTEGER NOT NULL, user_id INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (comment_id, user_id));
 CREATE INDEX IF NOT EXISTS posts_vis ON posts (vis, id);
@@ -75,7 +75,8 @@ CREATE INDEX IF NOT EXISTS coaches_coach ON coaches (coach_id);`);
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS users_invite ON users (invite);
 CREATE INDEX IF NOT EXISTS users_og ON users (og);
 CREATE INDEX IF NOT EXISTS users_ref ON users (ref_by);
-CREATE INDEX IF NOT EXISTS posts_og ON posts (og);`);
+CREATE INDEX IF NOT EXISTS posts_og ON posts (og);
+CREATE TABLE IF NOT EXISTS unfriended (who INTEGER NOT NULL, whom INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (who, whom));`);
 db.exec('PRAGMA optimize');
 const now = () => Date.now();
 
@@ -90,11 +91,18 @@ async function readBody(req, max) {
   for await (const c of req) { size += c.length; if (size > max) throw fail(413, 'Слишком большой файл'); chunks.push(c); }
   return Buffer.concat(chunks);
 }
-const json = async (req, max = 64_000) => { try { return JSON.parse((await readBody(req, max)).toString('utf8') || '{}'); } catch (e) { if (e.code === 413) throw fail(413, 'Слишком большой запрос'); if (e.public) throw e; throw fail(400, 'Неверный запрос'); } };
+const json = async (req, max = 64_000) => {
+  let v; try { v = JSON.parse((await readBody(req, max)).toString('utf8') || '{}'); } catch (e) { if (e.code === 413) throw fail(413, 'Слишком большой запрос'); if (e.public) throw e; throw fail(400, 'Неверный запрос'); }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw fail(400, 'Неверный запрос');   // null, число, массив — не наш формат
+  return v;
+};
+const objs = a => (Array.isArray(a) ? a : []).filter(x => x && typeof x === 'object');
 const buckets = new Map();
+// фиксированное окно: O(1) и без роста памяти, даже если запросы продолжают сыпаться после отказа
 function rate(key, max, windowMs) {
-  const t = now(), a = (buckets.get(key) || []).filter(x => t - x < windowMs); a.push(t); buckets.set(key, a);
-  if (a.length > max) throw fail(429, 'Слишком часто. Подождите немного.');
+  const t = now(); let b = buckets.get(key);
+  if (!b || t - b.start >= windowMs) { b = { start: t, n: 0, win: windowMs }; buckets.set(key, b); }
+  if (++b.n > max) throw fail(429, 'Слишком часто. Подождите немного.');
 }
 // За Caddy верим только последнему адресу в X-Forwarded-For (его дописывает сам Caddy); первый клиент может подделать.
 const ipOf = req => {
@@ -103,22 +111,26 @@ const ipOf = req => {
   const xff = String(req.headers['x-forwarded-for'] || '').split(',').map(x => x.trim()).filter(Boolean);
   return xff[xff.length - 1] || remote;
 };
-setInterval(() => { const t = now(); for (const [k, a] of buckets) if (!a.length || t - a[a.length - 1] > 3_600_000) buckets.delete(k); }, 600_000).unref();
+setInterval(() => { const t = now(); for (const [k, b] of buckets) if (t - b.start >= b.win) buckets.delete(k); }, 600_000).unref();
 // общий дневной потолок запросов к нейросети — защита баланса ProxyAPI
 const AI_DAILY = Number(process.env.AI_DAILY_LIMIT || 1500);
-let aiDay = '', aiCount = 0;
+let aiDay = '', aiCount = 0, aiAnon = 0;
 const sha = s => createHash('sha256').update(s).digest('hex');
 
-function hashPass(p) { const salt = randomBytes(16); return 'scrypt$' + salt.toString('hex') + '$' + scryptSync(p, salt, 64).toString('hex'); }
-function checkPass(p, stored) {
-  const [, salt, hash] = String(stored).split('$'); if (!salt) return false;
-  const a = scryptSync(p, Buffer.from(salt, 'hex'), 64), b = Buffer.from(hash, 'hex');
+// пароли: scrypt в пуле потоков libuv — проверка пароля больше не останавливает весь сервер на ~30 мс
+const scryptA = (p, salt) => new Promise((ok, no) => scrypt(p, salt, 64, (e, k) => e ? no(e) : ok(k)));
+const hashPassSync = p => { const salt = randomBytes(16); return 'scrypt$' + salt.toString('hex') + '$' + scryptSync(p, salt, 64).toString('hex'); };
+async function hashPass(p) { const salt = randomBytes(16); return 'scrypt$' + salt.toString('hex') + '$' + (await scryptA(p, salt)).toString('hex'); }
+async function checkPass(p, stored) {
+  const [, salt, hash] = String(stored).split('$'); if (!salt || !hash) return false;
+  const a = await scryptA(p, Buffer.from(salt, 'hex')), b = Buffer.from(hash, 'hex');
   return a.length === b.length && timingSafeEqual(a, b);
 }
+const DUMMY_HASH = hashPassSync(randomBytes(9).toString('hex'));   // для несуществующего логина считаем так же долго — по времени ответа не узнать, есть ли он
 function cookieToken(req) { const m = /(?:^|;\s*)hf=([A-Za-z0-9_-]{20,})/.exec(req.headers.cookie || ''); return m && m[1]; }
 function userOf(req) {
   const t = cookieToken(req); if (!t) return null;
-  const u = q('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?').get(sha(t)) || null;
+  const u = q('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.created > ?').get(sha(t), now() - 365 * 864e5) || null;
   if (u && now() - (u.seen_at || 0) > 300_000) { try { q('UPDATE users SET seen_at = ? WHERE id = ?').run(now(), u.id); } catch {} }   // «был в сети» — не чаще раза в 5 минут
   return u;
 }
@@ -146,8 +158,23 @@ const isCoachOf = (coach, client) => Boolean(q('SELECT 1 FROM coaches WHERE coac
 /* ---------------- заявки «посчитано неверно» ---------------- */
 // администратор по умолчанию — @papa; в /etc/healthy.env можно добавить других через запятую
 // пустое ADMIN_USERS= отключает админов
+// права закреплены за id аккаунта: логин можно сменить или занять, а id — нет. Аккаунт с админ-логином закрепляется при первом
+// появлении (при запуске или регистрации); освободившийся админ-логин больше никто занять не может.
 const ADMINS = new Set(String(process.env.ADMIN_USERS ?? 'papa').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
-const isAdmin = u => Boolean(u && ADMINS.has(String(u.username).toLowerCase()));
+db.exec('CREATE TABLE IF NOT EXISTS admin_pins (name TEXT PRIMARY KEY, user_id INTEGER NOT NULL)');
+const adminIds = new Set();
+const loadPins = () => { adminIds.clear(); for (const r of q('SELECT name, user_id FROM admin_pins').all()) if (ADMINS.has(r.name)) adminIds.add(r.user_id); };
+function pinAdmin(username, id) {
+  const n = String(username).toLowerCase(); if (!ADMINS.has(n) || q('SELECT 1 FROM admin_pins WHERE name = ?').get(n)) return;
+  q('INSERT INTO admin_pins (name, user_id) VALUES (?, ?)').run(n, id); loadPins();
+}
+for (const n of ADMINS) { const u = q('SELECT id FROM users WHERE username = ? ORDER BY id LIMIT 1').get(n); if (u) pinAdmin(n, u.id); }
+loadPins();
+const pinnedName = name => Boolean(q('SELECT 1 FROM admin_pins WHERE name = ?').get(String(name).toLowerCase()));
+const isAdmin = u => Boolean(u && adminIds.has(u.id));
+// имя: без управляющих и невидимых символов, и нельзя назваться ботом или приложением
+const cleanName = v => String(v ?? '').normalize('NFKC').replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '').replace(/\s+/g, ' ').trim().slice(0, 30);
+const FAKE_NAME = /помощник\s*по\s*питанию|healthy\s*fit|администрац|служба\s*поддержк/i;
 const REASONS = ['dish', 'weight', 'missing', 'extra', 'macros', 'other'];
 const cleanItems = a => JSON.stringify((Array.isArray(a) ? a : []).slice(0, 20).map(i => ({ name: String(i?.name || '').slice(0, 60), grams: num(i?.grams),
   kcal_100: num(i?.kcal_100), p_100: num(i?.p_100), f_100: num(i?.f_100), c_100: num(i?.c_100), fat: String(i?.fat || '').slice(0, 10) })));
@@ -193,7 +220,7 @@ function notify(userId, data, skipIfChat) {
     sendPush(VAPID, sub, data, PUSH_SUBJECT).then(code => {
       // удаляем только по «подписки больше нет» (404/410); 403 и прочее бывает временно — подписку не трогаем
       if (code === 404 || code === 410) q('DELETE FROM push_subs WHERE endpoint = ?').run(sub.endpoint);
-    });
+    }).catch(e => { console.error('push', e.code || e.message); if (/ECDH|KEY|INVALID/i.test(String(e.code || e.message))) q('DELETE FROM push_subs WHERE endpoint = ?').run(sub.endpoint); });
   }
 }
 const msgText = (kind, body, meta) => kind === 'text' ? body.slice(0, 120) : kind === 'post' ? `📌 Публикация: ${meta?.title || 'блюдо'}${body ? ` — ${body.slice(0, 80)}` : ''}` : kind === 'meal' ? `🍽 ${meta?.title || 'Блюдо'}${meta?.kcal ? ` · ${Math.round(meta.kcal)} ккал` : ''}`
@@ -209,25 +236,25 @@ function syncOf(u) {
   if (syncCache.size > 100) syncCache.clear();   // дневники с фото тяжёлые — много в памяти не держим
   syncCache.set(u.id, { at: u.sync_at, data }); return data;
 }
-const FAT_SHARE = { none: 0, light: 0.03, heavy: 0.08, included: 0 };
+const FAT_SHARE = { none: 0, light: 0.03, heavy: 0.08, included: 0 }, FAT_CAP = { light: 10, heavy: 20 };
 function itemTotals(it) {
   const g = (+it.grams || 0) / 100, kcal100 = +it.kcal_100 > 0 ? +it.kcal_100 : 4 * (+it.p_100 || 0) + 4 * (+it.c_100 || 0) + 9 * (+it.f_100 || 0);
-  const addFat = (+it.grams || 0) * (FAT_SHARE[it.fat] || 0);
+  const addFat = it.role === 'drink' || it.role === 'sauce' ? 0 : Math.min((+it.grams || 0) * (FAT_SHARE[it.fat] || 0), FAT_CAP[it.fat] || 0);   // как в app.js
   return { kcal: kcal100 * g + addFat * 9, p: (+it.p_100 || 0) * g, f: (+it.f_100 || 0) * g + addFat, c: (+it.c_100 || 0) * g };
 }
 function daySummary(u) {
   const db = syncOf(u); if (!db || !db.days) return null;
-  const date = dayKey(now()), day = db.days[date] || {}, s = db.settings || {}, prof = db.profile || {};
+  const date = dayKeyTz(now(), u.tz), day = db.days[date] || {}, s = db.settings || {}, prof = db.profile || {};
   const t = { kcal: 0, p: 0, f: 0, c: 0 };
-  for (const m of day.meals || []) for (const it of m.items || []) { const x = itemTotals(it); t.kcal += x.kcal; t.p += x.p; t.f += x.f; t.c += x.c; }
+  for (const m of objs(day.meals)) for (const it of objs(m.items)) { const x = itemTotals(it); t.kcal += x.kcal; t.p += x.p; t.f += x.f; t.c += x.c; }
   const h = (db.health || {})[date] || {};
-  let bonus = 0; try { bonus = HFCalc.dayBonus({ ...prof, weight: +prof.weight || 75 }, day.acts || [], day.steps || h.steps || 0, h.active_kcal || 0).kcal; } catch {}
+  let bonus = 0; try { bonus = HFCalc.dayBonus({ ...prof, weight: +prof.weight || 75 }, objs(day.acts), +day.steps || +h.steps || 0, +h.active_kcal || 0).kcal; } catch {}
   const r = Math.round;
   return { date, kcal: r(t.kcal), p: r(t.p), f: r(t.f), c: r(t.c), goal: r((+s.goal || 2000) + bonus), pGoal: r(+s.p || 120), fGoal: r(+s.f || 65), cGoal: r((+s.c || 230) + bonus / 4),
-    water: r(+day.water || 0), waterGoal: r(+s.waterGoal || 2000), meals: (day.meals || []).length, workouts: (day.acts || []).length, bonus: r(bonus), updated: u.sync_at || null };
+    water: r(+day.water || 0), waterGoal: r(+s.waterGoal || 2000), meals: objs(day.meals).length, workouts: objs(day.acts).length, bonus: r(bonus), updated: u.sync_at || null };
 }
 // сводку видят только друзья и только если человек её не скрыл
-const summaryFor = (me, u) => u.id !== me && u.share_summary !== 0 && areFriends(me, u.id) ? daySummary(u) : null;
+const summaryFor = (me, u) => { try { return u.id !== me && u.share_summary !== 0 && areFriends(me, u.id) ? daySummary(u) : null; } catch (e) { console.error('summary', u.id, e.message); return null; } };
 
 /* ---------------- публикации ---------------- */
 function shapePost(p, me) {
@@ -246,11 +273,15 @@ const inviteCode = u => { if (u.invite) return u.invite; const c = newCode(); q(
 const inviter = code => code && /^[A-Za-z0-9_-]{6,16}$/.test(code) ? q('SELECT * FROM users WHERE invite = ? AND username != ?').get(code, BOT_USERNAME) : null;
 const inviteFacts = u => ({ friends: q(`SELECT COUNT(*) n FROM friends WHERE (a = ? OR b = ?) AND status = 'accepted'`).get(u.id, u.id).n,
   posts: q('SELECT COUNT(*) n FROM posts WHERE user_id = ?').get(u.id).n, card: u.og ? `/media/${u.og}` : '' });
+// файл удаляем, только если на него больше ничто не ссылается: пост, галерея, превью, аватар, сообщение, комментарий, заявка
+const mediaInUse = id => Boolean(q('SELECT 1 FROM posts WHERE media = ? OR og = ? OR gallery LIKE ? LIMIT 1').get(id, id, `%"${id}"%`)
+  || q('SELECT 1 FROM users WHERE avatar = ? OR og = ? LIMIT 1').get(id, id) || q('SELECT 1 FROM messages WHERE media = ? LIMIT 1').get(id)
+  || q('SELECT 1 FROM comments WHERE media = ? LIMIT 1').get(id) || q('SELECT 1 FROM reports WHERE media = ? LIMIT 1').get(id));
 async function dropMedia(id) {
-  if (q('SELECT 1 FROM posts WHERE media = ? OR og = ?').get(id, id) || q('SELECT 1 FROM users WHERE avatar = ? OR og = ?').get(id, id)) return;
+  if (!id || mediaInUse(id)) return;
   q('DELETE FROM media WHERE id = ?').run(id); await unlink(join(MEDIA, id)).catch(() => {});
 }
-const isAdminId = id => isAdmin(q('SELECT username FROM users WHERE id = ?').get(id));
+const isAdminId = id => adminIds.has(id);
 function visiblePost(id, me) {
   const p = q('SELECT * FROM posts WHERE id = ?').get(id);
   if (!p || !(canSeePost(me, p) || isAdminId(me))) throw fail(404, 'Публикация не найдена');
@@ -272,6 +303,21 @@ const USERNAME = /^[a-z0-9_.]{3,20}$/i;
 const TZ = process.env.APP_TZ || 'Europe/Moscow';
 const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
 const dayKey = t => dayFmt.format(new Date(t));
+// «сегодня» у каждого своё: часовой пояс телефона приходит в PATCH /api/me (Хабаровск не должен жить по Москве)
+const tzFmts = new Map(), tzClocks = new Map();
+const okTz = tz => { if (!tz || typeof tz !== 'string' || tz.length > 40) return false; try { new Intl.DateTimeFormat('en-CA', { timeZone: tz }); return true; } catch { return false; } };
+function dayKeyTz(t, tz) {
+  if (!tz || tz === TZ) return dayKey(t);
+  let f = tzFmts.get(tz);
+  if (!f) { try { f = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }); } catch { f = dayFmt; } if (tzFmts.size < 600) tzFmts.set(tz, f); }
+  return f.format(new Date(t));
+}
+function clockTz(tz) {
+  let f = tzClocks.get(tz || TZ);
+  if (!f) { try { f = new Intl.DateTimeFormat('en-GB', { timeZone: tz || TZ, hour: '2-digit', hourCycle: 'h23', weekday: 'short' }); } catch { f = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', hourCycle: 'h23', weekday: 'short' }); } if (tzClocks.size < 600) tzClocks.set(tz || TZ, f); }
+  const parts = Object.fromEntries(f.formatToParts(new Date()).map(x => [x.type, x.value]));
+  return { hour: +parts.hour, weekday: parts.weekday };
+}
 const prevDay = k => { const d = new Date(k + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); };
 // огонёк считаем по истории переписки — результат кэшируем на 30 с и сбрасываем при новом сообщении
 const flameCache = new Map();
@@ -308,26 +354,122 @@ const MODELS = {
 };
 const PROMPT = await readFile(fileURLToPath(new URL('./prompt.txt', import.meta.url)), 'utf8');
 const PROMPT_TEXT = await readFile(fileURLToPath(new URL('./prompt-text.txt', import.meta.url)), 'utf8');   // еда словами или голосом — без фото
-const num = v => (Number.isFinite(+v) ? +v : 0);
-const pick = (v, allowed, dflt) => { v = String(v || '').toLowerCase(); return allowed.includes(v) ? v : dflt; };
+// Без зависимостей. Устойчивый разбор ответа модели + нормализация.
+const ALCO = /пив|вин[оаеу]|водк|коньяк|виски|бренди|ром\b|джин|текил|ликёр|ликер|шампан|игрист|просекко|сидр|настойк|глинтвейн|сангри|мохито|мартини|вермут|саке|beer|wine|vodka|whisk|cognac|brandy|\brum\b|\bgin\b|tequila|liqueur|cider|champagne|prosecco/i;
+const SWEET = /эритрит|сукралоз|стеви|без сахара|zero|диет|sugar.?free|протеинов.*батонч/i;
+const NOCAL = /вода|минерал|чай\b|чай |кофе\b|эспрессо|американо|лёд|лед\b|water|\btea\b|coffee|espresso|americano|zero|диет|без сахара/i;
+// число из «4,5», "180 г", "~150", "90-100" (среднее), 1e3; всё прочее → 0
+const num = v => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  const s = String(v ?? '').replace(/ |\s/g, '').replace(/(\d),(\d)/g, '$1.$2');
+  const r = s.match(/(\d+(?:\.\d+)?)[-–—](\d+(?:\.\d+)?)/); if (r) return (+r[1] + +r[2]) / 2;
+  const m = s.match(/-?\d+(?:\.\d+)?/); return m ? +m[0] : 0;
+};
+const pick = (v, allowed, dflt) => { v = String(v || '').toLowerCase().trim(); return allowed.includes(v) ? v : dflt; };
+const FAT_SYN = { oil: 'light', butter: 'light', some: 'light', little: 'light', yes: 'light', true: 'light', sauteed: 'light', fried: 'heavy', deep: 'heavy', 'deep-fried': 'heavy', much: 'heavy', 'a lot': 'heavy', no: 'none', false: 'none', 'немного': 'light', 'много': 'heavy', 'нет': 'none' };
+const ROLE_SYN = { beverage: 'drink', drinks: 'drink', напиток: 'drink', dressing: 'sauce', condiment: 'sauce', соус: 'sauce' };
+
+// текст ответа: строка или массив частей [{type:'text',text}]
+const contentText = c => Array.isArray(c) ? c.map(p => typeof p === 'string' ? p : p?.text || '').join('') : String(c || '');
+// мелкий ремонт: хвостовые запятые, NaN/Infinity, одинарные кавычки (только если двойных нет совсем), //-комментарии
+const repair = t => {
+  let s = t.replace(/\/\/[^\n"]*$/gm, '').replace(/,\s*([}\]])/g, '$1').replace(/:\s*(-?Infinity|NaN)\b/g, ':null');
+  if (!s.includes('"') && s.includes("'")) s = s.replace(/'/g, '"');
+  return s;
+};
+const tryJSON = t => { for (const v of [t, repair(t)]) { try { return JSON.parse(v); } catch {} } return null; };
+// обрезанный JSON (finish=length): отрезаем до последнего целого продукта и закрываем скобки
+function salvage(t) {
+  for (let pos = t.lastIndexOf('}'), n = 0; pos > 0 && n < 60; pos = t.lastIndexOf('}', pos - 1), n++) {
+    for (const tail of [']}', '}]}', '}', ']}}']) { const j = tryJSON(t.slice(0, pos + 1) + tail); if (j && Array.isArray(j.items) && j.items.length) return j; }
+  }
+  return null;
+}
+// {result:{items}} / {data:{items}} → внутренний объект
+const unwrap = j => {
+  if (!j || typeof j !== 'object' || Array.isArray(j)) return Array.isArray(j) && j.length && j[0]?.grams != null ? { items: j } : null;
+  if ('items' in j) return j;
+  for (const v of Object.values(j)) if (v && typeof v === 'object' && !Array.isArray(v) && 'items' in v) return v;
+  return j;   // объект без items (например, «не еда») → пустой список
+};
+// все сбалансированные {…} верхнего уровня; берём ПОСЛЕДНИЙ, где есть продукты (модель «исправилась»)
+function parseModel(raw) {
+  const s = contentText(raw).replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/```(?:json)?/gi, '');
+  const cands = []; let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
+    if (ch === '"' && depth > 0) inStr = true;
+    else if (ch === '{') { if (depth++ === 0) start = i; }
+    else if (ch === '}' && depth > 0 && --depth === 0) cands.push({ t: s.slice(start, i + 1) });
+  }
+  if (depth > 0 && start >= 0) cands.push({ t: s.slice(start), cut: true });
+  let best = null, cut = false;
+  for (const c of cands) {
+    let j = c.cut ? null : tryJSON(c.t), wasCut = false;
+    if (!j) { j = salvage(c.t); wasCut = !!j; }
+    const u = unwrap(j); if (!u) continue;
+    const has = (Array.isArray(u.items) ? u.items : u.items ? [u.items] : []).length > 0;
+    if (has || !best) { best = u; cut = wasCut; }
+  }
+  return best ? { j: best, truncated: cut } : null;
+}
+
 function clean(j) {
-  const items = Array.isArray(j.items) ? j.items : [];
+  const raw = Array.isArray(j.items) ? j.items : j.items && typeof j.items === 'object' ? [j.items] : [];
+  let bad = '', lowConf = false;
+  const items = raw.slice(0, 20).filter(i => i && typeof i === 'object').map(i => {
+    const fatNum = typeof i.fat === 'number' ? i.fat : undefined;   // «fat»: 11 — это граммы, а не категория
+    const fatRaw = String(fatNum === undefined ? i.fat || '' : '').toLowerCase().trim();
+    const roleRaw = String(i.role || '').toLowerCase().trim();
+    const it = {
+      name: String(i.name_ru || i.name || i.name_en || 'Блюдо').trim().slice(0, 60),
+      role: pick(ROLE_SYN[roleRaw] || roleRaw, ['food', 'drink', 'sauce'], 'food'),
+      fat: pick(FAT_SYN[fatRaw] || fatRaw, ['none', 'light', 'heavy', 'included'], 'none'),
+      grams: num(i.grams ?? i.weight ?? i.g), grams_low: num(i.grams_low), grams_high: num(i.grams_high),
+      kcal_100: num(i.kcal_100 ?? i.kcal ?? i.calories ?? i.kcal_per_100g),
+      p_100: num(i.p_100 ?? i.protein ?? i.proteins ?? i.p), f_100: num(i.f_100 ?? fatNum ?? i.fats ?? i.fat_g ?? i.f), c_100: num(i.c_100 ?? i.carbs ?? i.carbohydrates ?? i.c),
+    };
+    const gs = String(i.grams ?? '');
+    if (/шт|pcs|piece|кус|ломт/i.test(gs)) { bad = 'граммы в штуках'; it.grams = 0; }   // пусть ответит запасная модель
+    if (it.grams > 0 && it.grams < 1) it.grams *= 1000;                                  // модель написала кг
+    if (it.grams < 0) lowConf = true;
+    if (it.grams > 2000) lowConf = true;
+    it.grams = Math.max(0, Math.min(2000, it.grams));
+    it.kcal_100 = Math.max(0, Math.min(900, it.kcal_100));
+    for (const k of ['p_100', 'f_100', 'c_100']) it[k] = Math.max(0, Math.min(100, it[k]));
+    // значения на порцию, а не на 100 г: Б+Ж+У > 100 г на 100 г физически невозможно
+    if (it.p_100 + it.f_100 + it.c_100 > 105 && it.grams > 100) { const d = it.grams / 100; for (const k of ['kcal_100', 'p_100', 'f_100', 'c_100']) it[k] = Math.round(it[k] / d * 10) / 10; }
+    // сходимость ккал и БЖУ
+    const byMacro = 4 * it.p_100 + 9 * it.f_100 + 4 * it.c_100;
+    if (byMacro > 5) {
+      const lo = it.kcal_100 < byMacro * 0.75, hi = it.kcal_100 > byMacro * 1.25;
+      const alco = ALCO.test(it.name) || (it.role === 'drink' && it.kcal_100 - byMacro <= 250);   // этанол 7 ккал/г: пусть превышает
+      if ((lo && !SWEET.test(it.name)) || (hi && !alco)) it.kcal_100 = Math.round(byMacro);
+    }
+    // жир: к напиткам масло не добавляем; соус/масло — уже «чистые» значения; «heavy» при жирных значениях — жир уже учтён
+    if (it.role === 'drink' && it.fat !== 'included') it.fat = 'none';
+    if (it.role === 'sauce' && (it.fat === 'light' || it.fat === 'heavy')) it.fat = 'included';
+    if (it.fat === 'heavy' && it.f_100 >= 10) it.fat = 'included';
+    if (it.grams > 0 && it.kcal_100 === 0 && byMacro <= 5 && !NOCAL.test(it.name) && it.role !== 'drink') bad = bad || `пустое КБЖУ: ${it.name}`;
+    return it;
+  }).filter(i => i.grams > 0);
+  // дубликаты: то же название и та же калорийность — один продукт с суммой граммов
+  const merged = [];
+  for (const it of items) {
+    const twin = merged.find(m => m.name.toLowerCase() === it.name.toLowerCase() && m.fat === it.fat && Math.abs(m.kcal_100 - it.kcal_100) <= Math.max(5, m.kcal_100 * 0.05));
+    if (twin) { twin.grams = Math.min(2000, twin.grams + it.grams); twin.grams_low += it.grams_low; twin.grams_high += it.grams_high; } else merged.push(it);
+  }
+  let options = j.options;
+  if (typeof options === 'string') options = options.split(/[,;\/\n]|\s\|\s/);
+  options = (Array.isArray(options) ? options : []).map(o => typeof o === 'object' && o ? o.label ?? o.text ?? o.value ?? o.option ?? '' : o)
+    .map(o => String(o ?? '').trim()).filter(Boolean).slice(0, 4).map(o => o.slice(0, 40));
   return {
-    items: items.slice(0, 20).map(i => ({
-      name: String(i.name_ru || i.name_en || 'Блюдо').slice(0, 60),
-      role: pick(i.role, ['food', 'drink', 'sauce'], 'food'), fat: pick(i.fat, ['none', 'light', 'heavy', 'included'], 'none'),
-      grams: Math.max(0, Math.min(2000, num(i.grams))), grams_low: num(i.grams_low), grams_high: num(i.grams_high),
-      kcal_100: Math.max(0, Math.min(900, num(i.kcal_100))), p_100: Math.max(0, Math.min(100, num(i.p_100))),
-      f_100: Math.max(0, Math.min(100, num(i.f_100))), c_100: Math.max(0, Math.min(100, num(i.c_100))),
-    })).filter(i => i.grams > 0).map(i => {
-      // калорийность должна сходиться с БЖУ (4·Б + 9·Ж + 4·У): если модель ошиблась больше чем на 25% — считаем по БЖУ
-      const byMacro = 4 * i.p_100 + 9 * i.f_100 + 4 * i.c_100;
-      if (i.role !== 'drink' && byMacro > 5 && Math.abs(i.kcal_100 - byMacro) / byMacro > 0.25) i.kcal_100 = Math.round(byMacro);   // напитки не трогаем: у алкоголя калории не из БЖУ
-      return i;
-    }),
-    confidence: pick(j.confidence, ['low', 'medium', 'high'], 'medium'),
-    question: String(j.question || '').slice(0, 120),
-    options: (Array.isArray(j.options) ? j.options : []).slice(0, 4).map(o => String(o).slice(0, 40)),
+    items: merged,
+    confidence: lowConf ? 'low' : pick(j.confidence, ['low', 'medium', 'high'], 'medium'),
+    question: options.length ? String(j.question || '').slice(0, 120) : '',
+    options: String(j.question || '') ? options : [],
+    ...(bad ? { bad } : {}),
   };
 }
 // Скорость: модель «рассуждает» перед ответом — для оценки еды по фото хватает низкого уровня.
@@ -338,13 +480,24 @@ const AI_HEDGE_MS = Number(process.env.AI_HEDGE_MS || 15000);     // столь�
 const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 42000); // общий потолок ожидания ответа
 const AI_BASE = (process.env.AI_BASE_URL || 'https://api.proxyapi.ru/v1').replace(/\/$/, '');
 const aiStats = [];   // последние 200 распознаваний: время, размер фото, токены — для админа
+const AI_DETAIL = process.env.AI_DETAIL || 'auto';            // auto | high | low — только для openai/*
+const AI_JSON = process.env.AI_JSON === '1';                     // response_format json_object для openai/* (включить после проверки на ProxyAPI)
+const AI_THINKS = id => /^(openai|google)\//.test(id) && !NO_THINK.has(id);
+const NO_THINK = new Set();   // модели, которые вернули 400 на reasoning_effort — выключаем ТОЛЬКО им, а не всем             // gemini через OpenAI-совместимый API тоже понимает reasoning_effort (иначе «думает» по умолчанию и дорого)
 function aiBody(model, caption, image, withReasoning) {
-  const content = image
-    ? [{ type: 'text', text: PROMPT.replace('{caption}', caption) }, { type: 'image_url', image_url: /^openai\//.test(model.id) ? { url: image, detail: 'auto' } : { url: image } }]
-    : [{ type: 'text', text: PROMPT_TEXT.replace('{caption}', caption) }];
-  const b = { model: model.id, max_completion_tokens: AI_MAX_TOKENS, messages: [{ role: 'user', content }] };
-  // описание словами: картинки нет, запрос лёгкий — можно дать модели подумать чуть дольше ради точности
-  if (withReasoning && REASONING !== 'off' && /^openai\//.test(model.id)) b.reasoning_effort = image ? REASONING : (process.env.AI_REASONING_TEXT || (REASONING === 'low' ? 'medium' : REASONING));
+  const P = image ? PROMPT : PROMPT_TEXT, oai = /^openai\//.test(model.id);
+  const img = image && { type: 'image_url', image_url: oai ? { url: image, detail: AI_DETAIL } : { url: image } };
+  let messages;
+  if (P.includes('{caption}')) {   // старый промпт с подстановкой; функция-замена — чтобы «$`» в подписи не размножало промпт
+    const text = P.replace('{caption}', () => caption);
+    messages = [{ role: 'user', content: image ? [{ type: 'text', text }, img] : [{ type: 'text', text }] }];
+  } else {                         // статичный system-промпт (одинаковый префикс → prompt caching), переменная часть — в конце
+    const cap = `<caption>${caption}</caption>`;
+    messages = [{ role: 'system', content: P }, { role: 'user', content: image ? [img, { type: 'text', text: cap }] : cap }];
+  }
+  const b = { model: model.id, max_completion_tokens: AI_MAX_TOKENS, messages };
+  if (oai && AI_JSON) b.response_format = { type: 'json_object' };
+  if (withReasoning && REASONING !== 'off' && AI_THINKS(model.id)) b.reasoning_effort = image ? REASONING : (process.env.AI_REASONING_TEXT || REASONING);
   return JSON.stringify(b);
 }
 async function callAI(body, signal) {
@@ -352,45 +505,59 @@ async function callAI(body, signal) {
 }
 async function analyze(req, res) {
   if (!KEY) throw fail(500, 'Сервер не настроен: нет ключа нейросети');
-  rate('ai:' + ipOf(req), LIMIT, 600_000);
-  const me = userOf(req); if (me) rate('aiu:' + me.id, LIMIT, 600_000);
-  const d = new Date().toISOString().slice(0, 10); if (d !== aiDay) { aiDay = d; aiCount = 0; }
-  if (++aiCount > AI_DAILY) { console.error('AI daily limit reached'); throw fail(503, 'Сегодня лимит распознаваний исчерпан. Попробуйте завтра.'); }
+  const me = userOf(req), ip = ipOf(req);
+  // гостю без аккаунта — попробовать, но не больше; общий дневной лимит гости могут занять не больше чем на 40%
+  rate('ai:' + ip, me ? LIMIT : 10, 600_000);
+  if (me) rate('aiu:' + me.id, LIMIT, 600_000); else rate('aianon:' + ip, 40, 864e5);
   const tIn = now();
   const body = await json(req, 4_000_000);
   const image = String(body.image || '');
-  const caption = String(body.caption || '').replace(/[<>]/g, '').slice(0, image ? 300 : 1000);
+  const capRaw = String(body.caption || '').replace(/[<>]/g, ''), capMax = image ? 500 : 1000;
+  const caption = capRaw.length > capMax ? capRaw.slice(0, 150) + ' … ' + capRaw.slice(-(capMax - 155)) : capRaw;
   if (image && (!/^data:image\/(jpeg|png|webp);base64,/.test(image) || image.length > 3_000_000)) throw fail(400, 'Нужна фотография JPEG/PNG до ~2 МБ');
   if (!image && caption.trim().length < 2) throw fail(400, 'Опишите, что вы съели');
+  // считаем только запросы, которые действительно уйдут в нейросеть: пустые и битые лимит не съедают
+  const d = new Date().toISOString().slice(0, 10); if (d !== aiDay) { aiDay = d; aiCount = 0; aiAnon = 0; }
+  if (aiCount >= AI_DAILY || (!me && aiAnon >= AI_DAILY * 0.4)) { console.error('AI daily limit reached'); throw fail(503, 'Сегодня лимит распознаваний исчерпан. Попробуйте завтра.'); }
+  aiCount++; if (!me) aiAnon++;
   const primary = MODELS[body.model] || MODELS.fast, backup = primary === MODELS.gemini ? MODELS.fast : MODELS.gemini;
   const t0 = now();
   // одна попытка у одной модели: никогда не бросает, всегда возвращает итог — так их удобно гонять наперегонки
   async function attempt(model, signal) {
-    const ta = now(); let usedReasoning = REASONING !== 'off' && /^openai\//.test(model.id);
+    const ta = now(); let usedReasoning = REASONING !== 'off' && AI_THINKS(model.id);
     try {
       let r = await callAI(aiBody(model, caption, image, true), signal);
       if (r.status === 400 && usedReasoning) {
         const txt = await r.text();
         if (!/reasoning/i.test(txt)) return { model, status: 400, why: txt.slice(0, 200), ms: now() - ta };
-        console.error('reasoning_effort не поддерживается — выключаю'); REASONING = 'off'; usedReasoning = false;
+        console.error(`reasoning_effort не поддерживается ${model.id} — выключаю для неё`); NO_THINK.add(model.id); usedReasoning = false;
         r = await callAI(aiBody(model, caption, image, false), signal);
       }
       if (!r.ok) return { model, status: r.status, why: (await r.text().catch(() => '')).slice(0, 200), ms: now() - ta };
-      const data = await r.json().catch(() => null), ch = data?.choices?.[0];
-      const m = String(ch?.message?.content || '').match(/\{[\s\S]*\}/);
-      let parsed = null; try { parsed = m ? JSON.parse(m[0]) : null; } catch {}
-      if (!parsed) return { model, status: 200, bad: true, why: `пустой/битый ответ, finish=${ch?.finish_reason || '?'}`, ms: now() - ta, usage: data?.usage };
-      return { model, ok: true, parsed, usage: data?.usage || {}, usedReasoning, ms: now() - ta };
+      const data = await r.json().catch(e => { if (signal.aborted) throw e; return null; }), ch = data?.choices?.[0];   // обрыв по таймауту — это «нет ответа», а не «битый ответ»
+      const pr = parseModel(ch?.message?.content);
+      if (!pr) return { model, status: 200, bad: true, why: `пустой/битый ответ, finish=${ch?.finish_reason || '?'}`, ms: now() - ta, usage: data?.usage };
+      const cl = clean(pr.j);
+      // обрезанный ответ или явный брак — спрашиваем запасную модель, а спасённое держим про запас
+      if (pr.truncated || cl.bad) {
+        const keep = cl.items.filter(i => i.kcal_100 > 0 || i.role === 'drink' || NOCAL.test(i.name));
+        return { model, status: 200, bad: true, why: `${cl.bad || 'обрезанный JSON'}, finish=${ch?.finish_reason || '?'}`, ms: now() - ta, usage: data?.usage, salvage: keep.length ? { ...cl, items: keep, confidence: 'low' } : null };
+      }
+      return { model, ok: true, parsed: cl, usage: data?.usage || {}, usedReasoning, ms: now() - ta };
     } catch (e) { return { model, status: 0, why: e.name === 'AbortError' ? 'нет ответа (таймаут)' : `сеть: ${e.message}`, ms: now() - ta }; }
   }
   // основная модель; если молчит дольше AI_HEDGE_MS или ошиблась — параллельно спрашиваем запасную, берём первый годный ответ
   const cA = new AbortController(), cB = new AbortController();
   const deadline = setTimeout(() => { cA.abort(); cB.abort(); }, AI_TIMEOUT_MS);
+  // человек закрыл приложение или отменил — дальше модели не ждём и запасную не запускаем
+  const gone = () => { if (!res.writableEnded) { cA.abort(); cB.abort(); } };
+  req.once('close', gone); res.once('close', gone);
   const pA = attempt(primary, cA.signal);
   let hedgeT; const hedge = new Promise(r => { hedgeT = setTimeout(() => r(null), AI_HEDGE_MS); });
   const fails = [];
   let res0 = await Promise.race([pA, hedge]); clearTimeout(hedgeT);
   if (res0 && !res0.ok) fails.push(res0);
+  if (req.destroyed || res.destroyed) { clearTimeout(deadline); cA.abort(); cB.abort(); return; }
   if (!res0?.ok && !(res0 && (res0.status === 402 || res0.status === 429))) {   // баланс и лимит ключа общие — запасная не поможет
     const pB = attempt(backup, cB.signal), list = res0 ? [pB] : [pA, pB];
     res0 = await new Promise(done => { let left = list.length; for (const p of list) p.then(r => { if (r.ok) done(r); else { if (!fails.includes(r)) fails.push(r); if (--left === 0) done(null); } }); });
@@ -401,6 +568,7 @@ async function analyze(req, res) {
     console.error(`analyze FAIL ${f.model.id} status=${f.status} ${f.ms}ms ${f.why}`);
     aiStats.push({ at: now(), model: f.model.id, ms: f.ms, ok: false, why: `${f.status ? 'http ' + f.status : ''} ${f.why}`.trim(), kb: Math.round(image.length * 0.75 / 1024), upload_ms: t0 - tIn, prompt: f.usage?.prompt_tokens || 0, out: f.usage?.completion_tokens || 0, reasoning: f.usage?.completion_tokens_details?.reasoning_tokens || 0, effort: REASONING });
   }
+  if (!res0?.ok) { const sv = fails.find(f => f.salvage); if (sv) res0 = { ok: true, model: sv.model, parsed: sv.salvage, usage: sv.usage || {}, usedReasoning: false }; }
   if (!res0?.ok) {
     while (aiStats.length > 200) aiStats.shift();
     const st = fails.map(f => f.status);
@@ -415,7 +583,8 @@ async function analyze(req, res) {
     prompt: u.prompt_tokens || 0, out: u.completion_tokens || 0, reasoning: u.completion_tokens_details?.reasoning_tokens || 0, effort: res0.usedReasoning ? REASONING : 'off', ok: true, ...(model !== primary ? { fallback: true } : {}) };
   aiStats.push(stat); while (aiStats.length > 200) aiStats.shift();
   console.log(`analyze ${model.id}${stat.fallback ? ' (запасная)' : ''} ${stat.ms}ms upload=${stat.upload_ms}ms ${stat.kb}KB tokens in=${stat.prompt} out=${stat.out} reasoning=${stat.reasoning} effort=${stat.effort}`);
-  send(res, 200, { ...clean(parsed), model: model.label, ms: stat.ms, ...(stat.fallback ? { fallback: true } : {}) });
+  const { bad: _bad, ...result } = parsed;
+  send(res, 200, { ...result, model: model.label, ms: stat.ms, ...(stat.fallback ? { fallback: true } : {}) });
 }
 
 /* ---------------- media ---------------- */
@@ -424,6 +593,15 @@ const MEDIA_TYPES = {
   'audio/webm': { ext: '.webm', max: 3e6 }, 'audio/mp4': { ext: '.m4a', max: 3e6 }, 'audio/ogg': { ext: '.ogg', max: 3e6 }, 'audio/aac': { ext: '.aac', max: 3e6 },
   'video/webm': { ext: '.webm', max: 25e6 }, 'video/mp4': { ext: '.mp4', max: 25e6 },
 };
+const UPLOAD_DAY = Number(process.env.UPLOAD_DAY_MB || 300) * 1e6;
+// раз в час: файлы, загруженные больше суток назад и так ни к чему не привязанные (отменили отправку, закрыли приложение), — удаляем
+async function sweepMedia() {
+  try {
+    const rows = q('SELECT id FROM media WHERE created < ? AND created > ? ORDER BY created LIMIT 2000').all(now() - 864e5, now() - 8 * 864e5);
+    for (const { id } of rows) { await new Promise(r => setImmediate(r)); await dropMedia(id); }
+  } catch (e) { console.error('sweep', e.message); }
+}
+setInterval(sweepMedia, 3_600_000).unref(); setTimeout(sweepMedia, 120_000).unref();
 async function upload(req, res, me) {
   rate('up:' + me.id, 60, 600_000);
   let type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase(), buf;
@@ -436,6 +614,9 @@ async function upload(req, res, me) {
     if (buf.length > MEDIA_TYPES[type].max) throw fail(413, 'Слишком большой файл');
   }
   const spec = MEDIA_TYPES[type]; if (!spec) throw fail(415, 'Неподдерживаемый формат');
+  // суточная квота на аккаунт — чтобы никто не забил диск сервера
+  const used = q('SELECT COALESCE(SUM(size), 0) s FROM media WHERE owner = ? AND created > ?').get(me.id, now() - 864e5).s;
+  if (used + (buf ? buf.length : +req.headers['content-length'] || 0) > UPLOAD_DAY) throw fail(413, 'На сегодня лимит загрузок исчерпан — попробуйте завтра');
   if (!buf) buf = await readBody(req, spec.max);
   if (buf.length < 100) throw fail(400, 'Пустой файл');
   const id = randomBytes(16).toString('hex') + spec.ext;
@@ -448,23 +629,31 @@ async function serveMedia(req, res, id) {
   if (!m) { res.writeHead(404); return res.end(); }
   const me = userOf(req);
   // аватарки и карточки-превью для мессенджеров открыты всем: ими человек делится сам
-  const isAvatar = q('SELECT 1 FROM users WHERE avatar = ? OR og = ?').get(id, id) || q('SELECT 1 FROM posts WHERE og = ?').get(id);
+  // и фото публикаций «для всех»: ими делятся ссылкой, и гость должен увидеть, что ему прислали
+  const isAvatar = q('SELECT 1 FROM users WHERE avatar = ? OR og = ?').get(id, id) || q("SELECT 1 FROM posts WHERE og = ? OR (media = ? AND vis = 'public')").get(id, id);
   const allowed = isAvatar || isAdmin(me) || (me && (m.owner === me.id ||
     q('SELECT 1 FROM messages WHERE media = ? AND (sender = ? OR recipient = ?)').get(id, me.id, me.id) ||
     q('SELECT user_id, vis FROM posts WHERE media = ? OR gallery LIKE ?').all(id, `%"${id}"%`).some(p => canSeePost(me.id, p)) ||
     q('SELECT p.user_id, p.vis FROM comments c JOIN posts p ON p.id = c.post_id WHERE c.media = ?').all(id).some(p => canSeePost(me.id, p))));
   if (!allowed) { res.writeHead(403); return res.end(); }
+  // файла может не оказаться на диске (ручная чистка, сбой) — тогда честный 404, а не повисший ответ
+  let size; try { size = (await stat(join(MEDIA, id))).size; } catch { res.writeHead(404); return res.end(); }
   const range = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
   // имена файлов случайные и никогда не меняются — браузер может хранить их «навсегда»
   const headers = { 'Content-Type': m.type, 'Accept-Ranges': 'bytes', 'Cache-Control': 'private, max-age=31536000, immutable' };
-  if (range) {
-    const start = range[1] ? +range[1] : 0, end = range[2] ? Math.min(+range[2], m.size - 1) : m.size - 1;
-    if (start > end || start >= m.size) { res.writeHead(416, { 'Content-Range': `bytes */${m.size}` }); return res.end(); }
-    res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${m.size}`, 'Content-Length': end - start + 1 });
-    return createReadStream(join(MEDIA, id), { start, end }).pipe(res);
+  const pipe = opts => { const st = createReadStream(join(MEDIA, id), opts); st.on('error', () => res.destroy()); st.pipe(res); };
+  if (range && (range[1] || range[2])) {
+    let start, end;
+    if (!range[1]) { start = Math.max(0, size - +range[2]); end = size - 1; }   // bytes=-N — последние N байт
+    else { start = +range[1]; end = range[2] ? Math.min(+range[2], size - 1) : size - 1; }
+    if (start > end || start >= size) { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); return res.end(); }
+    res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 });
+    if (req.method === 'HEAD') return res.end();
+    return pipe({ start, end });
   }
-  res.writeHead(200, { ...headers, 'Content-Length': m.size });
-  createReadStream(join(MEDIA, id)).pipe(res);
+  res.writeHead(200, { ...headers, 'Content-Length': size });
+  if (req.method === 'HEAD') return res.end();
+  pipe();
 }
 
 /* ---------------- health ingest ---------------- */
@@ -473,13 +662,13 @@ async function serveMedia(req, res, id) {
 function harvest(obj, date0) {
   const days = new Map();
   const add = (date, k, v) => { const d = days.get(date) || {}; d[k] = (d[k] || 0) + v; days.set(date, d); };
-  const walk = (o, ctxDate, keyPath) => {
-    if (o == null) return;
-    if (Array.isArray(o)) { o.forEach(x => walk(x, ctxDate, keyPath)); return; }
+  const walk = (o, ctxDate, keyPath, depth = 0) => {
+    if (o == null || depth > 32) return;   // глубже 32 уровней шагов не бывает — защита от переполнения стека
+    if (Array.isArray(o)) { o.forEach(x => walk(x, ctxDate, keyPath, depth + 1)); return; }
     if (typeof o === 'object') {
       const d = String(o.date || o.day || o.startTime || o.start_time || o.start || o.time || ctxDate || '').slice(0, 10);
       const date = /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : ctxDate;
-      for (const [k, v] of Object.entries(o)) walk(v, date, (keyPath + '.' + k).toLowerCase());
+      for (const [k, v] of Object.entries(o)) walk(v, date, (keyPath + '.' + k).toLowerCase(), depth + 1);
       return;
     }
     // «Команды» на русском могут прислать «8 421» или «412,5 ккал» — убираем пробелы и единицы
@@ -502,7 +691,7 @@ async function healthIngest(req, res, url) {
   // последнюю отправку храним для диагностики: пользователь видит в приложении, что именно прислала команда
   const remember = (ok, parsed) => q('UPDATE users SET health_last = ? WHERE id = ?').run(JSON.stringify({ at: now(), ok, raw: raw.slice(0, 400), parsed, type: String(req.headers['content-type'] || '').slice(0, 60) }), u.id);
   let body; try { body = JSON.parse(raw); } catch { remember(false, null); throw fail(400, 'Нужен JSON'); }
-  const today = String(url.searchParams.get('date') || body.date || dayKey(now())).slice(0, 10);   // «сегодня» по часовому поясу сервиса (APP_TZ), а не по Гринвичу
+  const today = String(url.searchParams.get('date') || body.date || dayKeyTz(now(), u.tz)).slice(0, 10);   // «сегодня» по часовому поясу сервиса (APP_TZ), а не по Гринвичу
   const days = harvest(body, today);
   remember(days.size > 0, Object.fromEntries(days));
   let saved = 0;
@@ -527,13 +716,17 @@ async function api(req, res, url) {
   if (p === '/api/auth/register' && M === 'POST') {
     rate('reg:' + ipOf(req), 10, 3_600_000);
     const b = await json(req);
-    const username = String(b.username || '').trim(), name = String(b.name || '').trim().slice(0, 30), pass = String(b.password || '');
+    const username = String(b.username || '').trim(), name = cleanName(b.name), pass = String(b.password || '').slice(0, 256);
     if (!USERNAME.test(username)) throw fail(400, 'Логин: 3–20 символов, латиница, цифры, точка или _');
     if (!name) throw fail(400, 'Укажите имя');
+    if (FAKE_NAME.test(name)) throw fail(400, 'Это имя занято — выберите другое');
     if (pass.length < 6) throw fail(400, 'Пароль — минимум 6 символов');
-    if (username === BOT_USERNAME || q('SELECT 1 FROM users WHERE username = ?').get(username)) throw fail(409, 'Такой логин уже занят');
+    if (username.toLowerCase() === BOT_USERNAME || q('SELECT 1 FROM users WHERE username = ?').get(username) || pinnedName(username)) throw fail(409, 'Такой логин уже занят');
+    const hash = await hashPass(pass);
+    if (q('SELECT 1 FROM users WHERE username = ?').get(username)) throw fail(409, 'Такой логин уже занят');   // пока считали хэш, логин могли занять
     const r = q('INSERT INTO users (username, name, pass, health_token, created) VALUES (?, ?, ?, ?, ?)')
-      .run(username, name, hashPass(pass), randomBytes(18).toString('base64url'), now());
+      .run(username, name, hash, randomBytes(18).toString('base64url'), now());
+    pinAdmin(username, Number(r.lastInsertRowid));
     startSession(res, Number(r.lastInsertRowid));
     const nu = q('SELECT * FROM users WHERE id = ?').get(r.lastInsertRowid);
     return send(res, 200, { me: { ...pub(nu), admin: isAdmin(nu) } });
@@ -542,13 +735,15 @@ async function api(req, res, url) {
     rate('check:' + ipOf(req), 120, 60_000);
     const u = String(url.searchParams.get('username') || '').trim();
     if (!USERNAME.test(u)) return send(res, 200, { available: false, reason: 'Только латиница, цифры, точка и _, 3–20 символов' });
-    return send(res, 200, { available: !q('SELECT 1 FROM users WHERE username = ?').get(u) });
+    return send(res, 200, { available: u.toLowerCase() !== BOT_USERNAME && !pinnedName(u) && !q('SELECT 1 FROM users WHERE username = ?').get(u) });
   }
   if (p === '/api/auth/login' && M === 'POST') {
     rate('login:' + ipOf(req), 20, 900_000);
-    const b = await json(req);
-    const u = q('SELECT * FROM users WHERE username = ?').get(String(b.username || '').trim());
-    if (!u || !checkPass(String(b.password || ''), u.pass)) throw fail(401, 'Неверный логин или пароль');
+    const b = await json(req), uname = String(b.username || '').trim().slice(0, 40);
+    rate('loginu:' + uname.toLowerCase(), 10, 900_000);   // подбор пароля к одному аккаунту с разных адресов
+    const u = q('SELECT * FROM users WHERE username = ?').get(uname);
+    const okp = await checkPass(String(b.password || '').slice(0, 256), u?.pass || DUMMY_HASH);
+    if (!u || !okp) throw fail(401, 'Неверный логин или пароль');
     startSession(res, u.id);
     return send(res, 200, { me: { ...pub(u), admin: isAdmin(u) } });
   }
@@ -577,9 +772,9 @@ async function api(req, res, url) {
   if (sp && M === 'GET') {
     rate('inv:' + ipOf(req), 120, 600_000);
     const post = q('SELECT * FROM posts WHERE id = ?').get(Number(sp[1]));
-    if (!post?.og) throw fail(404, 'Публикация недоступна');
+    if (!post || !(post.og || post.vis === 'public')) throw fail(404, 'Публикация недоступна');
     const x = post.meta ? JSON.parse(post.meta) : {}, a = q('SELECT * FROM users WHERE id = ?').get(post.user_id);
-    return send(res, 200, { post: { id: post.id, title: x.title || '', kcal: x.kcal || 0, p: x.p || 0, f: x.f || 0, c: x.c || 0, day: !!x.day, card: `/media/${post.og}`, author: pub(a) } });
+    return send(res, 200, { post: { id: post.id, title: x.title || '', kcal: x.kcal || 0, p: x.p || 0, f: x.f || 0, c: x.c || 0, day: !!x.day, card: `/media/${post.og || post.media}`, author: pub(a) } });
   }
   const me = need(req);
   if (p === '/api/invite' && M === 'GET') {
@@ -595,6 +790,8 @@ async function api(req, res, url) {
     const b = await json(req, 2_000), u = inviter(String(b.code || ''));
     if (!u) throw fail(404, 'Ссылка устарела — попросите новую');
     if (u.id === me.id) return send(res, 200, { user: pub(u), state: 'self' });
+    // человек сам удалил вас из друзей — старая ссылка не возвращает дружбу без его согласия
+    if (q('SELECT 1 FROM unfriended WHERE who = ? AND whom = ?').get(u.id, me.id)) throw fail(404, 'Ссылка устарела — попросите новую');
     const a = Math.min(me.id, u.id), c = Math.max(me.id, u.id), was = friendState(me.id, u.id);
     if (was !== 'friends') {
       q(`INSERT INTO friends (a, b, status, created) VALUES (?, ?, 'accepted', ?) ON CONFLICT (a, b) DO UPDATE SET status = 'accepted'`).run(a, c, now());
@@ -618,8 +815,8 @@ async function api(req, res, url) {
     if (!post || !canSeePost(me.id, post) || (post.user_id !== me.id && post.vis !== 'public')) throw fail(404, 'Публикация не найдена');
     const b = await json(req, 2_000), m = q('SELECT * FROM media WHERE id = ? AND owner = ?').get(String(b.media || ''), me.id);
     if (!m || !m.type.startsWith('image/')) throw fail(400, 'Нужна картинка');
-    // карточку пересобирает только автор; остальные получают уже готовую
-    if (post.og && post.user_id !== me.id) { await dropMedia(m.id); return send(res, 200, { og: `/media/${post.og}` }); }
+    // карточку-превью задаёт только автор: чужой не может подменить картинку, которую увидят в мессенджерах
+    if (post.user_id !== me.id) { await dropMedia(m.id); return send(res, 200, { og: post.og ? `/media/${post.og}` : '/og.jpg', ready: !!post.og }); }
     const old = post.og; q('UPDATE posts SET og = ? WHERE id = ?').run(m.id, post.id);
     if (old && old !== m.id) await dropMedia(old);
     return send(res, 200, { og: `/media/${m.id}` });
@@ -627,7 +824,8 @@ async function api(req, res, url) {
   if (p === '/api/push/subscribe' && M === 'POST') {
     const b = await json(req, 8_000), ep = String(b.endpoint || ''), k = b.keys || {};
     let host = ''; try { const u = new URL(ep); if (u.protocol === 'https:') host = u.hostname; } catch {}
-    if (!PUSH_HOSTS.test(host) || !k.p256dh || !k.auth) throw fail(400, 'Неверная подписка');
+    const pk = Buffer.from(String(k.p256dh || ''), 'base64url'), au = Buffer.from(String(k.auth || ''), 'base64url');
+    if (!PUSH_HOSTS.test(host) || pk.length !== 65 || pk[0] !== 4 || au.length !== 16) throw fail(400, 'Неверная подписка');
     q(`INSERT INTO push_subs (endpoint, user_id, p256dh, auth, created, sess) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT (endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth, sess = COALESCE(excluded.sess, push_subs.sess)`)
       .run(ep, me.id, String(k.p256dh), String(k.auth), now(), sessOf(req) || null);
@@ -678,11 +876,11 @@ async function api(req, res, url) {
   if (dym && M === 'GET') {
     const u = q('SELECT * FROM users WHERE id = ?').get(Number(dym[1])); if (!u) throw fail(404, 'Пользователь не найден');
     if (!(isCoachOf(me.id, u.id) || isAdmin(me))) throw fail(403, 'Дневник открыт только тренеру');
-    const n = Math.max(1, Math.min(60, Number(url.searchParams.get('days') || 14)));
+    const n = Math.max(1, Math.min(60, Math.trunc(+url.searchParams.get('days')) || 14));
     let data = null; try { data = u.sync ? JSON.parse(u.sync) : null; } catch {}
     if (!data?.days) return send(res, 200, { days: {}, weights: [], profile: null, settings: null, health: {}, synced: null, n });
-    const from = shiftDay(dayKey(now()), -(n - 1)), days = {}, health = {};
-    for (const [k, v] of Object.entries(data.days)) if (k >= from) days[k] = { meals: (v.meals || []).map(m => ({ id: m.id, time: m.time, type: m.type, name: m.name, thumb: m.thumb || '', portion: m.portion || 1, items: m.items || [] })), water: v.water || 0, acts: v.acts || [], steps: v.steps || 0 };
+    const from = shiftDay(dayKeyTz(now(), u.tz), -(n - 1)), days = {}, health = {};
+    for (const [k, v] of Object.entries(data.days)) if (k >= from && v && typeof v === 'object') days[k] = { meals: objs(v.meals).map(m => ({ id: m.id, time: m.time, type: m.type, name: m.name, thumb: typeof m.thumb === 'string' ? m.thumb : '', portion: m.portion || 1, items: objs(m.items) })), water: +v.water || 0, acts: objs(v.acts), steps: +v.steps || 0 };
     for (const [k, v] of Object.entries(data.health || {})) if (k >= from) health[k] = v;
     const pr = data.profile || {};
     return send(res, 200, { n, synced: u.sync_at, days, health, weights: (data.weights || []).slice(-120), settings: data.settings || {},
@@ -721,7 +919,8 @@ async function api(req, res, url) {
   }
   if (p === '/api/me' && M === 'PATCH') {
     const b = await json(req, 32_000);
-    const name = b.name != null ? String(b.name).trim().slice(0, 30) : me.name;
+    const name = b.name != null ? cleanName(b.name) : me.name;
+    if (b.name != null && name !== me.name && FAKE_NAME.test(name)) throw fail(400, 'Это имя занято — выберите другое');
     const bio = b.bio != null ? String(b.bio).trim().slice(0, 140) : me.bio;
     let avatar = me.avatar;
     if (b.avatar !== undefined) {
@@ -736,10 +935,12 @@ async function api(req, res, url) {
     if (b.username != null && String(b.username).trim().toLowerCase() !== me.username.toLowerCase()) {
       username = String(b.username).trim();
       if (!USERNAME.test(username)) throw fail(400, 'Логин: 3–20 символов, латиница, цифры, точка или _');
-      if (q('SELECT 1 FROM users WHERE username = ? AND id != ?').get(username, me.id)) throw fail(409, 'Такой логин уже занят');
+      if (username.toLowerCase() === BOT_USERNAME || q('SELECT 1 FROM users WHERE username = ? AND id != ?').get(username, me.id)) throw fail(409, 'Такой логин уже занят');
+      const pin = q('SELECT user_id FROM admin_pins WHERE name = ?').get(username.toLowerCase()); if (pin && pin.user_id !== me.id) throw fail(409, 'Такой логин уже занят');
     }
     q('UPDATE users SET username = ?, name = ?, bio = ?, avatar = ?, stats = ? WHERE id = ?').run(username, name || me.name, bio, avatar, stats, me.id);
     if (b.shareSummary !== undefined) q('UPDATE users SET share_summary = ? WHERE id = ?').run(b.shareSummary ? 1 : 0, me.id);
+    if (b.tz !== undefined && okTz(b.tz)) q('UPDATE users SET tz = ? WHERE id = ?').run(b.tz, me.id);
     return send(res, 200, { me: pub(q('SELECT * FROM users WHERE id = ?').get(me.id)) });
   }
   if (p === '/api/me/health-token' && M === 'POST') {
@@ -750,18 +951,25 @@ async function api(req, res, url) {
     rate('sync:' + me.id, 120, 600_000);
     const raw = (await readBody(req, 8_000_000)).toString('utf8');
     let parsed; try { parsed = JSON.parse(raw); } catch { throw fail(400, 'Неверные данные'); }
-    if (!parsed || typeof parsed !== 'object' || !parsed.days) throw fail(400, 'Неверные данные');
-    q('UPDATE users SET sync = ?, sync_at = ? WHERE id = ?').run(raw, now(), me.id);
-    return send(res, 200, { ok: true, at: now() });
+    if (!parsed || typeof parsed !== 'object' || !parsed.days || typeof parsed.days !== 'object') throw fail(400, 'Неверные данные');
+    // версия: телефон присылает, от какой копии он считал свои правки. Копию успел перезаписать другой телефон — 409,
+    // клиент заберёт её, объединит со своей и пришлёт снова. Старые клиенты без заголовка пишут как раньше.
+    const cur = q('SELECT sync_at FROM users WHERE id = ?').get(me.id).sync_at || 0, base = req.headers['if-match'];
+    if (base != null && base !== '' && Number(base) !== cur) return send(res, 409, { error: 'Копию обновило другое устройство', at: cur });
+    const at = Math.max(now(), cur + 1);
+    q('UPDATE users SET sync = ?, sync_at = ? WHERE id = ?').run(raw, at, me.id);
+    return send(res, 200, { ok: true, at });
   }
   if (p === '/api/sync' && M === 'GET') {
+    const since = Number(url.searchParams.get('since') || 0);
+    if (since) { const c = q('SELECT sync_at FROM users WHERE id = ?').get(me.id); if ((c.sync_at || 0) <= since) return send(res, 200, { unchanged: true, at: c.sync_at || 0 }); }
     const r = q('SELECT sync, sync_at FROM users WHERE id = ?').get(me.id);
     return send(res, 200, { data: r.sync ? JSON.parse(r.sync) : null, at: r.sync_at });
   }
   if (p === '/api/health' && M === 'GET') {
     const rows = q('SELECT date, steps, active_kcal, updated FROM health WHERE user_id = ? AND date >= ? ORDER BY date').all(me.id, String(url.searchParams.get('from') || '2000-01-01'));
     const last = q('SELECT health_last FROM users WHERE id = ?').get(me.id)?.health_last;
-    return send(res, 200, { days: rows, last: last ? JSON.parse(last) : null, today: dayKey(now()) });
+    return send(res, 200, { days: rows, last: last ? JSON.parse(last) : null, today: dayKeyTz(now(), me.tz) });
   }
   if (p === '/api/media' && M === 'POST') return upload(req, res, me);
 
@@ -807,15 +1015,12 @@ async function api(req, res, url) {
     }
     if (!pm[2] && M === 'DELETE') {
       if (post.user_id !== me.id) throw fail(403, 'Можно удалить только свою публикацию');
+      const ids = [post.media, post.og, ...(post.gallery ? JSON.parse(post.gallery) : []), ...q('SELECT media FROM comments WHERE post_id = ? AND media IS NOT NULL').all(post.id).map(x => x.media)];
       q('DELETE FROM likes WHERE post_id = ?').run(post.id);
       q('DELETE FROM comment_likes WHERE comment_id IN (SELECT id FROM comments WHERE post_id = ?)').run(post.id);
       q('DELETE FROM comments WHERE post_id = ?').run(post.id);
       q('DELETE FROM posts WHERE id = ?').run(post.id);
-      for (const mid of [post.media, ...(post.gallery ? JSON.parse(post.gallery) : [])]) {
-        if (mid && !q('SELECT 1 FROM messages WHERE media = ?').get(mid) && !q('SELECT 1 FROM posts WHERE media = ? OR gallery LIKE ?').get(mid, `%"${mid}"%`) && !q('SELECT 1 FROM users WHERE avatar = ?').get(mid)) {
-          q('DELETE FROM media WHERE id = ?').run(mid); await unlink(join(MEDIA, mid)).catch(() => {});
-        }
-      }
+      for (const mid of ids) await dropMedia(mid);
       return send(res, 200, { ok: true });
     }
     if (pm[2] === '/like') {
@@ -894,11 +1099,12 @@ async function api(req, res, url) {
         notify(other, { title: 'Заявка в друзья', body: `${me.name} (@${me.username}) хочет добавить вас в друзья`, url: '/?tab=chats', tag: `friend-${me.id}` });
       } else if (st === 'incoming') {
         q(`UPDATE friends SET status = 'accepted' WHERE a = ? AND b = ?`).run(a, b);
+        q('DELETE FROM unfriended WHERE (who = ? AND whom = ?) OR (who = ? AND whom = ?)').run(me.id, other, other, me.id);   // помирились сами
         notify(other, { title: 'Новый друг', body: `${me.name} принял(а) вашу заявку`, url: `/?user=${me.id}`, tag: `friend-${me.id}` });
       }
       return send(res, 200, { state: friendState(me.id, other) });
     }
-    if (M === 'DELETE') { q('DELETE FROM friends WHERE a = ? AND b = ?').run(a, b); q('DELETE FROM coaches WHERE (client_id = ? AND coach_id = ?) OR (client_id = ? AND coach_id = ?)').run(me.id, other, other, me.id); return send(res, 200, { state: 'none' }); }
+    if (M === 'DELETE') { q('DELETE FROM friends WHERE a = ? AND b = ?').run(a, b); q('INSERT OR IGNORE INTO unfriended (who, whom, created) VALUES (?, ?, ?)').run(me.id, other, now()); q('DELETE FROM coaches WHERE (client_id = ? AND coach_id = ?) OR (client_id = ? AND coach_id = ?)').run(me.id, other, other, me.id); return send(res, 200, { state: 'none' }); }
   }
   const rm = /^\/api\/friends\/(\d+)\/restore$/.exec(p);
   if (rm && M === 'POST') {
@@ -924,7 +1130,8 @@ async function api(req, res, url) {
   if (cm) {
     const other = Number(cm[1]);
     if (M === 'GET') {
-      chatOpen.set(`${me.id}:${other}:${sessOf(req)}`, now());
+      rate('chatpoll:' + me.id, 600, 60_000);
+      if (other === BOT_ID || areFriends(me.id, other)) chatOpen.set(`${me.id}:${other}:${sessOf(req)}`, now());
       const after = Number(url.searchParams.get('after') || 0);
       const rows = q(`SELECT * FROM messages WHERE ((sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)) AND id > ? ORDER BY id DESC LIMIT 200`)
         .all(me.id, other, other, me.id, after).reverse();
@@ -978,9 +1185,7 @@ async function api(req, res, url) {
     const m = q('SELECT * FROM messages WHERE id = ? AND sender = ?').get(Number(dm[1]), me.id);
     if (!m) throw fail(404, 'Сообщение не найдено');
     q('DELETE FROM messages WHERE id = ?').run(m.id); dropFlame(m.sender, m.recipient);
-    if (m.media && !q('SELECT 1 FROM messages WHERE media = ?').get(m.media) && !q('SELECT 1 FROM posts WHERE media = ?').get(m.media)) {
-      q('DELETE FROM media WHERE id = ?').run(m.media); await unlink(join(MEDIA, m.media)).catch(() => {});
-    }
+    await dropMedia(m.media);
     return send(res, 200, { ok: true });
   }
   throw fail(404, 'Не найдено');
@@ -1032,10 +1237,12 @@ async function serveStatic(req, res, url) {
 /* ---------------- ссылки для мессенджеров ----------------
    /i/<код> — приглашение, /p/<id> — публикация. Отдаём то же приложение, но с og-тегами: Telegram, WhatsApp и VK
    рисуют по ним карточку-превью (картинку собирает приложение на телефоне и загружает как users.og / posts.og). */
+const PUBLIC_URL = String(process.env.PUBLIC_URL || '').replace(/\/$/, '');
 const escH = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const nfr = v => Math.round(+v || 0).toLocaleString('ru-RU');
 async function serveShare(req, res, url) {
-  const base = `${req.headers['x-forwarded-proto'] === 'http' ? 'http' : 'https'}://${req.headers.host}`;
+  // адрес сайта для ссылок в превью: из PUBLIC_URL, а не из заголовка Host, который может подделать клиент
+  const base = PUBLIC_URL || `${req.headers['x-forwarded-proto'] === 'http' ? 'http' : 'https'}://${String(req.headers.host || 'localhost').replace(/[^a-z0-9.:\-\[\]]/gi, '')}`;
   let title = 'Healthy Fit — КБЖУ по фото', desc = 'Сфоткал — и знаешь, сколько съел. Граммы и КБЖУ по фото за пару секунд, вода, тренировки и друзья.', img = '/og.jpg';
   const [, kind, id] = /^\/(i|p)\/([^/]+)/.exec(url.pathname);
   if (kind === 'i') {
@@ -1048,11 +1255,11 @@ async function serveShare(req, res, url) {
     }
   } else {
     const post = q('SELECT * FROM posts WHERE id = ?').get(Number(id));
-    if (post?.og) {
+    if (post && (post.og || post.vis === 'public')) {
       const x = post.meta ? JSON.parse(post.meta) : {}, a = q('SELECT name FROM users WHERE id = ?').get(post.user_id);
       title = `${x.title || 'Блюдо'} — ${nfr(x.kcal)} ккал`;
       desc = `Б ${nfr(x.p)} · Ж ${nfr(x.f)} · У ${nfr(x.c)} г. ${a?.name || ''} считает КБЖУ по фото в Healthy Fit — попробуйте со своей едой.`;
-      img = `/media/${post.og}`;
+      img = `/media/${post.og || post.media}`;
     }
   }
   const f = await staticFile(join(ROOT, 'index.html'));
@@ -1060,9 +1267,10 @@ async function serveShare(req, res, url) {
     ['og:image', base + img], ['og:image:width', '1200'], ['og:image:height', '630'], ['og:locale', 'ru_RU']]
     .map(([k, v]) => `<meta property="${k}" content="${escH(v)}">`).join('\n  ') + `\n  <meta name="twitter:card" content="summary_large_image">`;
   const html = f.buf.toString('utf8')
-    .replace(/<title>[^<]*<\/title>/, `<title>${escH(title)}</title>`)
-    .replace(/(<meta name="description" content=")[^"]*/, `$1${escH(desc)}`)
-    .replace('<meta charset="utf-8">', `<meta charset="utf-8">\n  ${meta}`)
+    // замены — функциями: иначе «$`» в имени или в ссылке вставит в страницу куски документа
+    .replace(/<title>[^<]*<\/title>/, () => `<title>${escH(title)}</title>`)
+    .replace(/(<meta name="description" content=")[^"]*/, (_, a) => a + escH(desc))
+    .replace('<meta charset="utf-8">', () => `<meta charset="utf-8">\n  ${meta}`)
     // страница живёт по адресу /i/… — относительные пути к стилям и скриптам делаем абсолютными
     .replace(/(\s(?:src|href)=")(?![a-z]+:|\/|#)/g, '$1/');
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
@@ -1078,17 +1286,16 @@ try {
   db.exec(`CREATE TABLE IF NOT EXISTS coach_log (user_id INTEGER NOT NULL, day TEXT NOT NULL, kind TEXT NOT NULL, PRIMARY KEY (user_id, day, kind))`);
   BOT_ID = q('SELECT id FROM users WHERE username = ?').get(BOT_USERNAME)?.id || 0;
   if (!BOT_ID) BOT_ID = Number(q('INSERT INTO users (username, name, pass, health_token, created) VALUES (?, ?, ?, ?, ?)')
-    .run(BOT_USERNAME, 'Помощник по питанию', hashPass(randomBytes(24).toString('hex')), randomBytes(18).toString('base64url'), now()).lastInsertRowid);
+    .run(BOT_USERNAME, 'Помощник по питанию', hashPassSync(randomBytes(24).toString('hex')), randomBytes(18).toString('base64url'), now()).lastInsertRowid);
 } catch (e) { console.error('coach init', e.message); }
-const clockFmt = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', hourCycle: 'h23', weekday: 'short' });
 const nf = v => Math.round(v).toLocaleString('ru-RU');
 const lit = ml => String(Math.round(ml / 100) / 10).replace('.', ',');
 function dayStatsOf(data, date) {
   const day = data.days?.[date] || {}, s = data.settings || {}, prof = data.profile || {}, t = { kcal: 0, p: 0 };
-  for (const m of day.meals || []) for (const it of m.items || []) { const x = itemTotals(it); t.kcal += x.kcal * (1); t.p += x.p; }
+  for (const m of objs(day.meals)) for (const it of objs(m.items)) { const x = itemTotals(it); t.kcal += x.kcal; t.p += x.p; }
   const h = (data.health || {})[date] || {};
-  let bonus = 0; try { bonus = HFCalc.dayBonus({ ...prof, weight: +prof.weight || 75 }, day.acts || [], day.steps || h.steps || 0, h.active_kcal || 0).kcal; } catch {}
-  return { meals: (day.meals || []).length, kcal: t.kcal, p: t.p, goal: (+s.goal || 2000) + bonus, pGoal: +s.p || 120, water: +day.water || 0, waterGoal: +s.waterGoal || 2000 };
+  let bonus = 0; try { bonus = HFCalc.dayBonus({ ...prof, weight: +prof.weight || 75 }, objs(day.acts), +day.steps || +h.steps || 0, +h.active_kcal || 0).kcal; } catch {}
+  return { meals: objs(day.meals).length, kcal: t.kcal, p: t.p, goal: (+s.goal || 2000) + bonus, pGoal: +s.p || 120, water: +day.water || 0, waterGoal: +s.waterGoal || 2000 };
 }
 const shiftDay = (k, n) => { const d = new Date(k + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 function coachEvening(u, date, weekly) {
@@ -1134,12 +1341,12 @@ let coachBusy = false;
 async function coachTick() {
   if (!BOT_ID || coachBusy) return; coachBusy = true;
   try {
-    const parts = Object.fromEntries(clockFmt.formatToParts(new Date()).map(x => [x.type, x.value]));
-    const hour = +parts.hour, today = dayKey(now()), weekly = parts.weekday === 'Sun', since = now() - 30 * 864e5;
-    const ids = q(`SELECT u.id FROM users u WHERE u.id != ? AND (u.sync_at > ? OR EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id AND s.created > ?))`).all(BOT_ID, since, since).map(r => r.id);
-    for (const id of ids) {
+    const since = now() - 30 * 864e5;
+    const ids = q(`SELECT u.id, u.tz FROM users u WHERE u.id != ? AND (u.sync_at > ? OR EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id AND s.created > ?))`).all(BOT_ID, since, since);
+    for (const { id, tz } of ids) {
       await new Promise(r => setImmediate(r));   // по одному человеку за раз: сервер продолжает отвечать остальным
       try {
+        const { hour, weekday } = clockTz(tz), today = dayKeyTz(now(), tz), weekly = weekday === 'Sun';   // вечер — по часам самого человека
         if (!q('SELECT 1 FROM coach_log WHERE user_id = ? AND kind = ?').get(id, 'hello')) {
           q('INSERT OR IGNORE INTO coach_log (user_id, day, kind) VALUES (?, ?, ?)').run(id, today, 'hello'); coachSay(id, COACH_HELLO);
         }
@@ -1167,7 +1374,10 @@ http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/')) {
       // CSRF: изменяющие запросы только со своего сайта (кроме вебхука «Здоровья»)
       if (req.method !== 'GET' && url.pathname !== '/api/health/ingest') {
-        const origin = req.headers.origin; if (origin && new URL(origin).host !== req.headers.host) throw fail(403, 'Чужой источник');
+        const origin = req.headers.origin; let oh = null; try { oh = origin && new URL(origin).host; } catch {}
+        if (origin && oh !== req.headers.host) throw fail(403, 'Чужой источник');
+        // без Origin браузер всё равно шлёт Sec-Fetch-Site — запрос с чужого сайта отсекаем и так
+        const sfs = req.headers['sec-fetch-site']; if (!origin && sfs && sfs !== 'same-origin' && sfs !== 'none') throw fail(403, 'Чужой источник');
       }
       return await api(req, res, url);
     }

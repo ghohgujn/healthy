@@ -57,7 +57,7 @@ async function postOnce(vapid, sub, body, subject) {
     const r = await fetch(sub.endpoint, { method: 'POST', signal: ctrl.signal, body, headers: {
       Authorization: vapidHeader(vapid, sub.endpoint, subject), 'Content-Encoding': 'aes128gcm',
       'Content-Type': 'application/octet-stream', TTL: '86400', Urgency: 'high' } });
-    const text = r.ok ? '' : (await r.text()).slice(0, 200);
+    const text = r.ok ? '' : (await r.text().catch(() => '')).slice(0, 200);
     return { code: r.status, text };
   } catch (e) { return { code: 0, text: e.message }; } finally { clearTimeout(t); }
 }

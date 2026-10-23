@@ -24,16 +24,40 @@
 
   // после входа/регистрации: дружим с пригласившим и открываем то, чем поделились
   let accepting = null;
+  // только что зарегистрировался по ссылке — дружба сразу (регистрация с экрана «вас зовут» и есть согласие);
+  // уже был аккаунт — один вопрос «Добавить в друзья?»: чужую ссылку можно подсунуть, молча дружить нельзя
   async function afterAuth() {
     const { code, post } = pending();
     if (code && !accepting) {
-      accepting = S().api('/api/invite/accept', { method: 'POST', body: { code } })
-        .then(r => { lsSet('hf.ref', null); if (r.state === 'friends' && !r.already) { HF.toast(`${r.user.name} теперь у вас в друзьях 🎉`, 'Открыть', () => window.HFPosts?.openUser(r.user.id), 6000); S().refreshSocial(); } return r; })
-        .catch(e => { if (e.status === 404) lsSet('hf.ref', null); return null; })
-        .finally(() => { accepting = null; });
+      accepting = (async () => {
+        try {
+          if (!S().justRegistered) {
+            const info = await S().api(`/api/invite/${encodeURIComponent(code)}`).catch(() => null);
+            if (!info?.user || info.user.id === S().me?.id) { lsSet('hf.ref', null); return; }
+            if (S().friends?.some(f => f.id === info.user.id)) { lsSet('hf.ref', null); return; }
+            const yes = await askFriend(info.user); lsSet('hf.ref', null);
+            if (!yes) return;
+          }
+          const r = await S().api('/api/invite/accept', { method: 'POST', body: { code } });
+          lsSet('hf.ref', null);
+          if (r.state === 'friends' && !r.already) { HF.toast(`${r.user.name} теперь у вас в друзьях 🎉`, 'Открыть', () => window.HFPosts?.openUser(r.user.id), 6000); S().refreshSocial(); }
+        } catch (e) { if (e.status === 404) { lsSet('hf.ref', null); HF.toast(e.message); } }
+      })().finally(() => { accepting = null; });
       await accepting;
     }
     if (post && $('#onb')?.hidden !== false) { lsSet('hf.refPost', null); setTimeout(() => window.HFPosts?.openPost(post, false), 300); }
+  }
+  function askFriend(u) {
+    return new Promise(done => {
+      const sh = $('#refSheet'); let answered = false;
+      $('#refAva').innerHTML = S().avaHTML(u, 'ref-ava');
+      $('#refTitle').textContent = `${u.name} зовёт вас в друзья`;
+      $('#refSub').textContent = `@${u.username} · друзья видят еду и сводку дня друг друга, могут переписываться`;
+      const fin = v => { if (answered) return; answered = true; HF.closeDialog(sh); done(v); };
+      $('#refYes').onclick = () => fin(true); $('#refNo').onclick = () => fin(false);
+      sh.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => fin(false), { once: true }));
+      HF.openDialog(sh, '#refYes');
+    });
   }
   // для экрана приветствия: кто зовёт и чем поделился
   async function guestInfo() {
@@ -280,8 +304,8 @@
       if (!p) {
         p = (async () => {
           if (!inv) inv = await S().api('/api/invite');
-          const card = await postCard(post);
-          const id = await upload(card); await S().api(`/api/posts/${post.id}/og`, { method: 'POST', body: { media: id } });
+          // карточку-превью для мессенджеров ставит только автор; у чужого поста превью — его фото
+          if (post.mine) { const card = await postCard(post); const id = await upload(card); await S().api(`/api/posts/${post.id}/og`, { method: 'POST', body: { media: id } }); }
           const m = post.meta || {};
           return { url: `${location.origin}/p/${post.id}?r=${inv.code}`, text: `${m.title || 'Моя еда'} — ${nf(m.kcal)} ккал · Б ${nf(m.p)} Ж ${nf(m.f)} У ${nf(m.c)}. Считаю КБЖУ по фото в Healthy Fit` };
         })();

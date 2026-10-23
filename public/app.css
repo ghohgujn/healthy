@@ -1834,3 +1834,7 @@ html.no-select { overscroll-behavior: none; }
 .inv-ava { width: 56px; height: 56px; flex: none; font-size: var(--text-xl); box-shadow: 0 0 0 2px var(--color-paper), 0 0 0 4px var(--color-streak-2); }
 .onb-invite .onb-h { animation: rise 0.5s 0.1s cubic-bezier(.2,.8,.2,1) both; }
 @media (prefers-reduced-motion: reduce) { .onb-post, .onb-from, .onb-invite .onb-h, .inv-card.loading::after { animation: none; } }
+.ref-body { display: grid; justify-items: center; text-align: center; gap: var(--space-xs); padding-top: var(--space-lg); }
+.ref-ava { width: 76px; height: 76px; font-size: var(--text-2xl); box-shadow: 0 0 0 3px var(--color-card), 0 0 0 5px var(--color-streak-2); margin-bottom: var(--space-xs); }
+.ref-body .h2 { text-wrap: balance; }
+.ref-foot { display: grid; grid-template-columns: 1fr 1.4fr; gap: var(--space-sm); }

@@ -8,6 +8,7 @@
   const PROFILE0 = { name: '', avatar: '', sex: 'm', age: 25, height: 175, weight: 75, target: 0, bodyFat: 0, activity: 'light', goal: 'lose_healthy', configured: false };
   let db = { settings: { ...DEFAULTS }, days: {}, profile: { ...PROFILE0 }, weights: [], tomb: [], owner: null };
 
+  const clamp = (v, lo, hi) => { const n = +v; return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : lo; };   // импорт и чужие данные — без отрицательных граммов и Infinity
   function validDb(d) {
     if (!d || typeof d !== 'object' || !d.days || typeof d.days !== 'object') return null;
     const days = {};
@@ -16,18 +17,18 @@
       const meals = (Array.isArray(v.meals) ? v.meals : []).filter(m => m && Array.isArray(m.items)).map(m => ({
         id: String(m.id || Math.random().toString(36).slice(2)), time: +m.time || Date.parse(k), type: String(m.type || 'Приём пищи'),
         name: String(m.name || 'Блюдо'), thumb: typeof m.thumb === 'string' && m.thumb.startsWith('data:image/') ? m.thumb : '',
-        model: String(m.model || ''), portion: Math.max(0.1, Math.min(1, +m.portion || 1)),
+        model: String(m.model || ''), portion: Math.max(0.1, Math.min(1, +m.portion || 1)), ...(+m.upd > 0 ? { upd: +m.upd } : {}),
         items: m.items.map(i => ({
           name: String(i.name || 'Продукт'), role: ['food', 'drink', 'sauce'].includes(i.role) ? i.role : 'food',
           fat: ['none', 'light', 'heavy', 'included'].includes(i.fat) ? i.fat : 'none',
-          grams: +i.grams || 0, kcal_100: +i.kcal_100 || 0, p_100: +i.p_100 || 0, f_100: +i.f_100 || 0, c_100: +i.c_100 || 0,
+          grams: clamp(i.grams, 0, 5000), kcal_100: clamp(i.kcal_100, 0, 900), p_100: clamp(i.p_100, 0, 100), f_100: clamp(i.f_100, 0, 100), c_100: clamp(i.c_100, 0, 100),
           ...(+i.g0 > 0 ? { g0: +i.g0 } : {}),
         })),
       }));
       const acts = (Array.isArray(v.acts) ? v.acts : []).filter(a => a && HFCalc.ACTIVITIES[a.type]).map(a => ({
         id: String(a.id || Math.random().toString(36).slice(2)), type: a.type, level: Math.max(0, Math.min(2, +a.level || 0)),
         min: Math.max(5, Math.min(600, +a.min || 30)) }));
-      days[k] = { meals, water: Math.max(0, +v.water || 0), acts, steps: Math.max(0, Math.min(100000, +v.steps || 0)) };
+      days[k] = { meals, water: clamp(v.water, 0, 20000), ...(+v.waterAt > 0 ? { waterAt: +v.waterAt } : {}), acts, steps: Math.max(0, Math.min(100000, +v.steps || 0)) };
     }
     const pr = d.profile && typeof d.profile === 'object' ? d.profile : {};
     const profile = { ...PROFILE0, ...pr, name: String(pr.name || '').slice(0, 30),
@@ -83,9 +84,18 @@
     const have = new Set(); for (const d of Object.values(out.days)) { d.meals.forEach(m => have.add(m.id)); d.acts.forEach(a => have.add(a.id)); }
     for (const [k, rd] of Object.entries(rem.days)) {
       const d = (out.days[k] ||= { meals: [], water: 0, acts: [], steps: 0 });
-      for (const m of rd.meals) if (!have.has(m.id) && !tomb.has(m.id)) { d.meals.push(m); have.add(m.id); }
+      for (const m of rd.meals) {
+        if (tomb.has(m.id)) continue;
+        if (!have.has(m.id)) { d.meals.push(m); have.add(m.id); continue; }
+        // одна и та же запись правилась на двух устройствах — берём более позднюю правку
+        const i = d.meals.findIndex(x => x.id === m.id);
+        if (i >= 0 && (m.upd || 0) > (d.meals[i].upd || 0)) d.meals[i] = { ...m, thumb: m.thumb || d.meals[i].thumb };
+      }
       for (const a of rd.acts) if (!have.has(a.id) && !tomb.has(a.id)) { d.acts.push(a); have.add(a.id); }
-      d.water = Math.max(d.water, rd.water); d.steps = Math.max(d.steps || 0, rd.steps || 0);
+      // вода: побеждает последнее изменение (так её можно и уменьшить); у старых записей без отметки — максимум
+      if (d.waterAt || rd.waterAt) { if ((rd.waterAt || 0) > (d.waterAt || 0)) { d.water = rd.water; d.waterAt = rd.waterAt; } }
+      else d.water = Math.max(d.water, rd.water);
+      d.steps = Math.max(d.steps || 0, rd.steps || 0);
     }
     for (const d of Object.values(out.days)) { d.meals = d.meals.filter(m => !tomb.has(m.id)); d.acts = d.acts.filter(a => !tomb.has(a.id)); }
     const wd = new Set(out.weights.map(w => w.date)); for (const w of rem.weights) if (!wd.has(w.date)) out.weights.push(w);
@@ -102,10 +112,12 @@
 
   /* ---------- nutrition math (totals are computed here, never by the model) ---------- */
   const FAT_SHARE = { none: 0, light: 0.03, heavy: 0.08, included: 0 };
+  const FAT_CAP = { light: 10, heavy: 20 };   // граммы масла на продукт: 8% от тарелки супа — это 30+ г, нереально
   function itemTotals(it) {
     // Trust the model's kcal; use Atwater only when kcal is missing (ethanol and sweeteners break 4/4/9).
     const k = it.kcal_100 > 0 ? it.kcal_100 : 4 * it.p_100 + 4 * it.c_100 + 9 * it.f_100;
-    const g = it.grams / 100, addFat = it.grams * (FAT_SHARE[it.fat] || 0);
+    const noAdd = it.role === 'drink' || it.role === 'sauce';   // в напиток и в соус/масло «масло сверху» не добавляем
+    const g = it.grams / 100, addFat = noAdd ? 0 : Math.min(it.grams * (FAT_SHARE[it.fat] || 0), FAT_CAP[it.fat] || 0);
     return { kcal: k * g + addFat * 9, p: it.p_100 * g, f: it.f_100 * g + addFat, c: it.c_100 * g };
   }
   const sum = (list, fn) => list.reduce((a, x) => { const t = fn(x); a.kcal += t.kcal; a.p += t.p; a.f += t.f; a.c += t.c; return a; }, { kcal: 0, p: 0, f: 0, c: 0 });
@@ -198,7 +210,7 @@
   function setWater(ml) {
     const prev = day(selected).water;
     if (ml < prev) setTimeout(() => toast(`Вода: ${Math.max(0, Math.round(ml))} мл`, 'Вернуть', () => setWater(prev)), 0);
-    day(selected).water = Math.max(0, Math.min(10000, Math.round(ml)));
+    day(selected).water = Math.max(0, Math.min(10000, Math.round(ml))); day(selected).waterAt = Date.now();
     if (!save()) toast(STORAGE_FULL, null, null, 6000);
     renderWater();
   }
@@ -552,7 +564,7 @@
   function commitDraft(quiet) {
     if (draft.editing) {
       const m = day(draft.day).meals.find(x => x.id === draft.id);
-      if (m) { m.items = draft.items.map(i => ({ ...i })); m.portion = draft.portion || 1; }
+      if (m) { m.items = draft.items.map(i => ({ ...i })); m.portion = draft.portion || 1; m.upd = Date.now(); }
       const ok = save(); closeDialog(sheet); render();
       if (!quiet) toast(ok ? 'Сохранено' : STORAGE_FULL, null, null, ok ? 2200 : 6000);
       return ok ? { meal: m, isNew: false } : null;

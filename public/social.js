@@ -6,6 +6,7 @@
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const DEMO = !!(window.KBJU_CONFIG && window.KBJU_CONFIG.demo);
 
+  let justReg = false;   // аккаунт создан только что, в этом окне — дружба по ссылке без лишнего вопроса
   let me = null, friends = [], incoming = [], sent = [], chats = [], tab = 'today';
 
   // В превью без сервера подключается внешняя заглушка (demo/mock-api.js); в проекте её нет.
@@ -100,7 +101,7 @@
       try {
         const r = await api(mode === 'reg' ? '/api/auth/register' : '/api/auth/login', { method: 'POST',
           body: { name: f.get('name'), username: f.get('username'), password: f.get('password') } });
-        me = r.me; HF.toast(mode === 'reg' ? `Добро пожаловать, ${me.name}!` : 'Вы вошли');
+        me = r.me; justReg = mode === 'reg'; HF.toast(mode === 'reg' ? `Добро пожаловать, ${me.name}!` : 'Вы вошли');
         if (mode === 'reg') { claimDiary(); await pushProfile(); maybeOfferInstall(1200); } else await restoreIfEmpty();
         boot();
       } catch (err) { $('#authErr').textContent = err.message; }
@@ -110,6 +111,7 @@
   async function pushProfile() {
     if (!me) return;
     const p = HF.db.profile, body = { name: p.name || me.name, stats: stats() };
+    try { body.tz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch {}   // сервер считает «сегодня» по часам телефона
     if (p.avatar && !me.avatar) {
       try { body.avatar = (await uploadImage(p.avatar)).id; } catch (e) { logError('avatar', e); }
     }
@@ -187,21 +189,43 @@
     const el = $('#syncInfo');
     try {
       // фото старше 30 дней в облако не шлём — иначе за пару месяцев копия упирается в лимит
-      const cut = Date.now() - 30 * 864e5, copy = { ...HF.db, owner: me.id, days: {} };
-      for (const [k, d] of Object.entries(HF.db.days)) copy.days[k] = { ...d, meals: d.meals.map(m => m.time < cut ? { ...m, thumb: '' } : m) };
-      await api('/api/sync', { method: 'PUT', body: JSON.stringify(copy) });
+      await putSync({ ...HF.db, owner: me.id, days: trimThumbs(HF.db) });
       if (el) el.textContent = `Копия сохранена ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
     } catch (e) { if (el) el.textContent = `Копия не сохранилась: ${e.message}`; }
   }
+  // Облачная копия с версией: сервер принимает запись, только если с прошлого раза её никто не перезаписал.
+  // Записал другой телефон — забираем его копию, объединяем со своей и отправляем уже общую.
+  const syncAt = () => +(lsGet('hf.syncAt') || 0);
+  async function putSync(copy, tries = 0) {
+    const r = await fetch('/api/sync', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'If-Match': String(syncAt()) }, body: JSON.stringify(copy) });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 409 && tries < 2) { await pullMerge(true); return putSync({ ...HF.db, owner: me.id, days: trimThumbs(HF.db) }, tries + 1); }
+    if (!r.ok) throw new Error(j.error || 'Нет связи с сервером');
+    lsSet('hf.syncAt', String(j.at || 0));
+  }
+  const trimThumbs = db => { const cut = Date.now() - 30 * 864e5, days = {}; for (const [k, d] of Object.entries(db.days)) days[k] = { ...d, meals: d.meals.map(m => m.time < cut ? { ...m, thumb: '' } : m) }; return days; };
+  // подтянуть правки с другого устройства (дёшево: сервер отвечает «без изменений», если копия не менялась)
+  async function pullMerge(force) {
+    if (!me || DEMO) return;
+    try {
+      const r = await api(`/api/sync?since=${force ? 0 : syncAt()}`);
+      if (r.unchanged || !r.data) return;
+      if (r.data.owner && r.data.owner !== me.id) return;
+      const before = JSON.stringify(HF.db.days);
+      HF.db = HF.mergeDb(HF.db, r.data); HF.db.owner = me.id; lsSet('hf.syncAt', String(r.at || 0)); HF.save();
+      if (JSON.stringify(HF.db.days) !== before) HF.render();
+    } catch {}
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) pullMerge(false); });
   // Новый аккаунт на телефоне, где был дневник другого аккаунта, — начинаем с чистого дневника.
   function claimDiary() {
     if (HF.db.owner && HF.db.owner !== me.id) { const name = HF.db.profile.name; HF.db = HF.validDb({ days: {}, profile: { name } }); HF.render(); }
-    HF.db.owner = me.id; HF.save();
+    HF.db.owner = me.id; lsSet('hf.syncAt', '0'); HF.save();
   }
   // При входе: если на телефоне дневник другого аккаунта — заменяем облачным; иначе объединяем записи двух устройств.
   async function restoreIfEmpty() {
     try {
-      const r = await api('/api/sync'), local = HF.db;
+      const r = await api('/api/sync'), local = HF.db; lsSet('hf.syncAt', String(r.at || 0));
       const foreign = local.owner && local.owner !== me.id;
       if (!r.data) { if (foreign) { HF.db = HF.validDb({ days: {} }); HF.db.owner = me.id; HF.save(); HF.render(); } else { local.owner = me.id; syncUp(); } return; }
       const prev = local;
@@ -1049,9 +1073,10 @@
     onSave, shareMeal, sharePost, checkName, api, avaHTML, esc, flameBadge, openChat, plural, refreshSocial,
     get friends() { return friends; },
     get me() { return me; },
+    get justRegistered() { return justReg; },
     async auth(mode, data) {
       const r = await api(mode === 'reg' ? '/api/auth/register' : '/api/auth/login', { method: 'POST', body: data });
-      me = r.me; if (mode === 'reg') { claimDiary(); await pushProfile(); } else await restoreIfEmpty();
+      me = r.me; justReg = mode === 'reg'; if (mode === 'reg') { claimDiary(); await pushProfile(); } else await restoreIfEmpty();
       boot(); return me;
     },
   };
