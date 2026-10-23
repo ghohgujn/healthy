@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS health (user_id INTEGER NOT NULL, date TEXT NOT NULL,
 const stmts = new Map();
 const q = sql => { let st = stmts.get(sql); if (!st) { st = db.prepare(sql); stmts.set(sql, st); } return st; };
 // миграции: добавляем колонки, если их ещё нет
-for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER'], ['users', 'share_summary', 'INTEGER NOT NULL DEFAULT 1'], ['posts', 'gallery', 'TEXT'], ['comments', 'kind', "TEXT NOT NULL DEFAULT 'text'"], ['users', 'seen_at', 'INTEGER'], ['push_subs', 'sess', 'TEXT'], ['comments', 'media', 'TEXT'], ['comments', 'meta', 'TEXT'], ['users', 'invite', 'TEXT'], ['users', 'tz', 'TEXT'], ['users', 'og', 'TEXT'], ['users', 'ref_by', 'INTEGER'], ['posts', 'og', 'TEXT']])
+for (const [t, c, def] of [['posts', 'vis', "TEXT NOT NULL DEFAULT 'friends'"], ['comments', 'parent_id', 'INTEGER'], ['comments', 'reply_to', 'INTEGER'], ['users', 'health_last', 'TEXT'], ['messages', 'reply_to', 'INTEGER'], ['users', 'share_summary', 'INTEGER NOT NULL DEFAULT 1'], ['posts', 'gallery', 'TEXT'], ['comments', 'kind', "TEXT NOT NULL DEFAULT 'text'"], ['users', 'seen_at', 'INTEGER'], ['push_subs', 'sess', 'TEXT'], ['comments', 'media', 'TEXT'], ['comments', 'meta', 'TEXT'], ['users', 'invite', 'TEXT'], ['users', 'tz', 'TEXT'], ['users', 'push_state', 'TEXT'], ['users', 'push_at', 'INTEGER'], ['push_subs', 'last_code', 'INTEGER'], ['push_subs', 'last_at', 'INTEGER'], ['users', 'og', 'TEXT'], ['users', 'ref_by', 'INTEGER'], ['posts', 'og', 'TEXT']])
   if (!db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)) db.exec(`ALTER TABLE ${t} ADD COLUMN ${c} ${def}`);
 db.exec(`CREATE TABLE IF NOT EXISTS comment_likes (comment_id INTEGER NOT NULL, user_id INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (comment_id, user_id));
 CREATE INDEX IF NOT EXISTS posts_vis ON posts (vis, id);
@@ -220,6 +220,7 @@ function notify(userId, data, skipIfChat) {
     sendPush(VAPID, sub, data, PUSH_SUBJECT).then(code => {
       // удаляем только по «подписки больше нет» (404/410); 403 и прочее бывает временно — подписку не трогаем
       if (code === 404 || code === 410) q('DELETE FROM push_subs WHERE endpoint = ?').run(sub.endpoint);
+      else q('UPDATE push_subs SET last_code = ?, last_at = ? WHERE endpoint = ?').run(code, now(), sub.endpoint);   // для админки: доходят ли пуши
     }).catch(e => { console.error('push', e.code || e.message); if (/ECDH|KEY|INVALID/i.test(String(e.code || e.message))) q('DELETE FROM push_subs WHERE endpoint = ?').run(sub.endpoint); });
   }
 }
@@ -836,6 +837,15 @@ async function api(req, res, url) {
     const b = await json(req, 8_000); q('DELETE FROM push_subs WHERE endpoint = ? AND user_id = ?').run(String(b.endpoint || ''), me.id);
     return send(res, 200, { ok: true });
   }
+  // телефон сообщает, в каком состоянии у него уведомления: включены, запрещены, нужен экран «Домой», браузер не умеет…
+  // так в админке видно, кому и почему не приходят пуши
+  if (p === '/api/push/state' && M === 'POST') {
+    rate('pstate:' + me.id, 30, 600_000);
+    const b = await json(req, 2_000), st = String(b.state || '').slice(0, 20), pl = String(b.platform || '').slice(0, 40);
+    if (!/^(on|off|denied|ios-install|ios-old|inapp|unsupported)$/.test(st)) throw fail(400, 'Неверное состояние');
+    q('UPDATE users SET push_state = ?, push_at = ? WHERE id = ?').run(`${st}|${pl}`, now(), me.id);
+    return send(res, 200, { ok: true });
+  }
   if (p === '/api/push/test' && M === 'POST') {
     rate('ptest:' + me.id, 10, 600_000);
     const n = q('SELECT COUNT(*) n FROM push_subs WHERE user_id = ?').get(me.id).n;
@@ -894,13 +904,18 @@ async function api(req, res, url) {
     const rows = q(`SELECT u.id, u.username, u.name, u.avatar, u.bio, u.stats, u.created, u.seen_at, u.sync_at,
         (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id) posts,
         (SELECT COUNT(*) FROM friends f WHERE (f.a = u.id OR f.b = u.id) AND f.status = 'accepted') friends,
-        (SELECT MAX(created) FROM sessions s WHERE s.user_id = u.id) login
+        (SELECT MAX(created) FROM sessions s WHERE s.user_id = u.id) login,
+        (SELECT COUNT(*) FROM push_subs ps WHERE ps.user_id = u.id) devices,
+        (SELECT MAX(last_at) FROM push_subs ps WHERE ps.user_id = u.id AND ps.last_code BETWEEN 200 AND 299) push_ok, u.push_state
       FROM users u WHERE u.username != ? AND (? = '' OR u.username LIKE ? OR u.name LIKE ?) ORDER BY COALESCE(u.seen_at, u.created) DESC LIMIT 500`)
       .all(BOT_USERNAME, term, term + '%', '%' + term + '%');
     const total = q('SELECT COUNT(*) n FROM users WHERE username != ?').get(BOT_USERNAME).n, day = now() - 864e5, week = now() - 7 * 864e5;
     return send(res, 200, { total, active1: q('SELECT COUNT(*) n FROM users WHERE seen_at > ?').get(day).n, active7: q('SELECT COUNT(*) n FROM users WHERE seen_at > ?').get(week).n,
       newWeek: q('SELECT COUNT(*) n FROM users WHERE created > ? AND username != ?').get(week, BOT_USERNAME).n,
-      users: rows.map(u => ({ ...pub(u), created: u.created, seen: u.seen_at || u.login || null, sync: u.sync_at || null, posts: u.posts, friends: u.friends, admin: isAdmin(u) })) });
+      pushOn: q('SELECT COUNT(DISTINCT user_id) n FROM push_subs').get().n,
+      users: rows.map(u => { const [ps, pl] = String(u.push_state || '').split('|');
+        return { ...pub(u), created: u.created, seen: u.seen_at || u.login || null, sync: u.sync_at || null, posts: u.posts, friends: u.friends, admin: isAdmin(u),
+          push: { devices: u.devices, state: u.devices ? 'on' : ps || '', platform: pl || '', ok: u.push_ok || null } }; }) });
   }
   if (p === '/api/admin/stats' && M === 'GET') {
     if (!isAdmin(me)) throw fail(403, 'Только для администратора');

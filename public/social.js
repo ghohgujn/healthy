@@ -64,7 +64,9 @@
     // имя из аккаунта, если в профиле на телефоне его ещё нет
     if (me && !HF.db.profile.name && me.name) { HF.db.profile.name = me.name; HF.save(); HF.render(); }
     renderAuth(); renderAccountCard(); renderHealthCard();
-    if (me) { await refreshSocial(); pullHealth(); restoreIfEmpty(); syncPush(true); route(); window.HFShare?.afterAuth(); }
+    if (me) { await refreshSocial(); pullHealth(); restoreIfEmpty(); syncPush(true); route(); window.HFShare?.afterAuth();
+      // первый запуск с экрана «Домой» на iPhone — тот самый момент, когда уведомления наконец можно включить
+      if (standalone) maybeAskPush('standalone', 2500); else if (friends.length) maybeAskPush('start', 6000); }
     // пришёл по ссылке друга без аккаунта — сразу экран «вас зовут», даже если онбординг уже проходили на этом телефоне
     else if (window.HFShare?.pending().code || window.HFShare?.pending().post) window.HFOnboarding?.open(false, true);
     renderPushUI();
@@ -416,7 +418,7 @@
       const d = document.createElement('div'); d.className = 'req';
       d.innerHTML = `${avaHTML(u)}<span class="req-who"><b>${esc(u.name)}</b><small>@${esc(u.username)}</small></span>
         <button class="btn btn-primary btn-sm" data-a="yes">Принять</button><button class="icon-btn" data-a="no" aria-label="Отклонить"><svg><use href="#i-x"/></svg></button>`;
-      d.querySelector('[data-a=yes]').onclick = async () => { try { await api(`/api/friends/${u.id}`, { method: 'POST' }); HF.toast(`${u.name} теперь в друзьях`); } catch (e) { HF.toast(e.message); } refreshSocial(); };
+      d.querySelector('[data-a=yes]').onclick = async () => { try { await api(`/api/friends/${u.id}`, { method: 'POST' }); HF.toast(`${u.name} теперь в друзьях`); maybeAskPush('friend', 1800); } catch (e) { HF.toast(e.message); } refreshSocial(); };
       d.querySelector('[data-a=no]').onclick = async () => { await api(`/api/friends/${u.id}`, { method: 'DELETE' }).catch(() => {}); refreshSocial(); };
       rq.appendChild(d);
     }
@@ -473,7 +475,7 @@
   }
   function closeChat() { setReplyMsg(null); clearInterval(chatPoll); if (R) recFinish(false); HF.closeDialog(chatEl); peer = null; refreshSocial(); }
   // «Назад» из чата (кнопка, свайп, жест Safari) — всегда на вкладку «Чаты», а не в окно, из которого пришли
-  function leaveChat() { closeChat(); HF.closeOverlays(); if (!document.querySelector('#tab-chats:not([hidden])')) HF.showTab('chats'); }
+  function leaveChat() { if (pendingAsk) { pendingAsk = false; maybeAskPush('message', 700); } closeChat(); HF.closeOverlays(); if (!document.querySelector('#tab-chats:not([hidden])')) HF.showTab('chats'); }
   $('#chatBack').onclick = leaveChat; chatEl._back = leaveChat;
   async function loadMsgs() {
     if (!peer) return;
@@ -655,10 +657,12 @@
     HF.toast('Удалить сообщение у обоих?', 'Удалить', async () => { try { await api(`/api/messages/${id}`, { method: 'DELETE' }); li.remove(); } catch (e) { HF.toast(e.message); } }, 4000);
     setTimeout(() => li.classList.remove('del-ask'), 4000);
   }
+  let askedAfterMsg = false, pendingAsk = false;   // после первого своего сообщения — предложить уведомления (когда выйдет из чата)
   async function sendMsg(payload) {
     if (!peer) return;
     if (replyMsg) payload = { ...payload, reply: replyMsg.id };
     try { const r = await api(`/api/chats/${peer.id}`, { method: 'POST', body: payload }); setReplyMsg(null); appendMsg(r.message); lastId = Math.max(lastId, r.message.id);
+      if (!askedAfterMsg) { askedAfterMsg = true; setTimeout(() => { if (chatEl.hidden) maybeAskPush('message', 300); else pendingAsk = true; }, 400); }
       $('#chatScroll').scrollTop = $('#chatScroll').scrollHeight; return true; }
     catch (e) { HF.toast(e.message); return false; }
   }
@@ -948,26 +952,34 @@
   }
   const b64uToBytes = s => { const b = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)); return Uint8Array.from(b, c => c.charCodeAt(0)); };
   const swReady = () => swReg ? Promise.resolve(swReg) : Promise.race([navigator.serviceWorker.ready, new Promise((_, rej) => setTimeout(() => rej(new Error('service worker не запустился')), 8000))]);
+  // встроенный браузер Telegram / Instagram / VK / Facebook — там уведомлений не бывает и на экран «Домой» не добавить
+  const inApp = /Telegram|Instagram|FBAN|FBAV|VKClient|vkontakte|; wv\)|MicroMessenger|Line\//i.test(navigator.userAgent);
+  const iosVer = (() => { const m = /OS (\d+)_(\d+)/.exec(navigator.userAgent); return m ? +m[1] + +m[2] / 100 : 0; })();
+  const platformName = () => `${isIOS ? 'iPhone' : isAndroid ? 'Android' : 'Компьютер'}${isIOS && iosVer ? ' ' + Math.floor(iosVer) + '.' + Math.round(iosVer % 1 * 100) : ''}${standalone ? ' · с экрана «Домой»' : inApp ? ' · встроенный браузер' : ' · браузер'}`;
   async function pushStatus() {
     if (mock) return 'off';
-    if (!pushSupported) return isIOS && !standalone ? 'ios-install' : 'unsupported';
+    if (!pushSupported) return inApp ? 'inapp' : isIOS && !standalone ? 'ios-install' : isIOS && iosVer && iosVer < 16.4 ? 'ios-old' : 'unsupported';
     if (Notification.permission === 'denied') return 'denied';
     if (Notification.permission !== 'granted') return 'off';
     try { const sub = await (await swReady()).pushManager.getSubscription(); return sub ? 'on' : 'off'; } catch { return 'off'; }
   }
   async function enablePush() {
     if (mock) { HF.toast('В превью уведомления не работают — только на сервере'); return; }
-    if (!pushSupported) { showPushHelp(isIOS && !standalone ? 'ios-install' : 'unsupported'); return; }
+    if (!pushSupported) { openPushSheet(await pushStatus()); return false; }
     const perm = await Notification.requestPermission();   // первым же действием — иначе iOS не покажет запрос
-    if (perm !== 'granted') { if (perm === 'denied') showPushHelp('denied'); else HF.toast('Уведомления не включены'); renderPushUI(); return; }
+    if (perm !== 'granted') { if (perm === 'denied') openPushSheet('denied'); else HF.toast('Уведомления не включены — можно включить в «Профиль → Параметры»'); renderPushUI(); return false; }
+    let ok = false;
     try {
       const reg = await swReady(), { key } = await api('/api/push/key');
       let sub = await reg.pushManager.getSubscription();
       if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(key) });
       await api('/api/push/subscribe', { method: 'POST', body: sub.toJSON() });
-      HF.toast('Уведомления включены 🔔');
+      ok = true;
+      // сразу проверочное уведомление: человек видит, что всё работает, а не верит на слово
+      api('/api/push/test', { method: 'POST' }).catch(() => {});
+      HF.toast('Уведомления включены 🔔 Сейчас придёт проверочное');
     } catch (e) { logError('push-subscribe', e); HF.toast('Не удалось включить уведомления: ' + e.message); }
-    renderPushUI();
+    renderPushUI(); return ok;
   }
   // при каждом входе напоминаем серверу о подписке этого устройства (после смены аккаунта, переустановки и т.п.)
   // Разрешение есть, а подписки нет (iOS иногда тихо её отзывает) — подписываемся заново, без вопросов человеку.
@@ -990,25 +1002,63 @@
     if (mock || !pushSupported) return;
     try { const sub = await (await swReady()).pushManager.getSubscription(); if (sub) await api('/api/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } }); } catch {}
   }
-  function showPushHelp(kind) {
-    const steps = kind === 'ios-install'
-      ? `<p class="sub">На iPhone уведомления приходят только в приложение с экрана «Домой» (iOS 16.4 и новее).</p>
-         <ol class="steps"><li>В Safari нажмите <b>«Поделиться»</b> — квадрат со стрелкой внизу экрана.</li>
-         <li>Выберите <b>«На экран „Домой“»</b> → «Добавить».</li>
-         <li>Откройте <b>Healthy Fit</b> с иконки и войдите в аккаунт — дневник подтянется из облака.</li>
-         <li>Вкладка «Друзья» → <b>«Включить уведомления»</b> → «Разрешить».</li></ol>`
-      : kind === 'denied'
-      ? `<p class="sub">Уведомления запрещены для этого сайта. Разрешите их:</p>
-         <ol class="steps"><li><b>iPhone:</b> Настройки → Уведомления → Healthy Fit → Допуск уведомлений.</li>
-         <li><b>Android (Chrome):</b> значок замка слева от адреса → Разрешения → Уведомления → Разрешить.</li>
-         <li>Вернитесь сюда и нажмите «Включить уведомления» ещё раз.</li></ol>`
-      : `<p class="sub">Этот браузер не умеет получать уведомления. Откройте сайт в Chrome (Android) или добавьте на экран «Домой» в Safari (iPhone).</p>`;
-    $('#pushHelpBody').innerHTML = steps;
-    HF.openDialog($('#pushSheet'));
+  // Одно окно на все случаи: объясняет зачем, и главная кнопка делает ровно то, что нужно на этом телефоне
+  function openPushSheet(kind, reason) {
+    const li = (ico, t) => `<li><span class="pa-ico"><svg aria-hidden="true"><use href="#${ico}"/></svg></span><span>${t}</span></li>`;
+    const why = `<ul class="pa-why">${li('i-chat', 'Сообщения, голосовые и кружки от друзей')}${li('i-user', 'Заявки в друзья и комментарии к еде')}${li('i-spark', 'Вечером — итоги дня от помощника')}</ul>`;
+    const head = (t, sub) => `<div class="pa-bell" aria-hidden="true"><svg><use href="#i-bell"/></svg></div><h2 class="h2 pa-title" id="pushHelpTitle">${t}</h2>${sub ? `<p class="sub pa-sub">${sub}</p>` : ''}`;
+    const title = reason === 'friend' ? 'Друг добавлен — не пропустите его сообщения' : reason === 'message' ? 'Узнайте, когда вам ответят' : 'Включите уведомления';
+    let body = '', main = null, mainText = '';
+    if (kind === 'off') {
+      body = head(title, 'Без уведомлений вы узнаете о сообщениях, только когда откроете приложение.') + why;
+      mainText = 'Включить уведомления'; main = async () => { if (await enablePush()) HF.closeDialog($('#pushSheet')); };
+    } else if (kind === 'ios-install') {
+      body = head('На iPhone уведомления — только с экрана «Домой»', 'Так устроен iOS: сайту в Safari Apple не разрешает присылать уведомления. Добавьте Healthy Fit на экран «Домой» — это 10 секунд.')
+        + `<ol class="steps"><li>Добавьте приложение на экран «Домой» — покажем как.</li><li>Откройте Healthy Fit <b>с иконки</b> и войдите тем же логином — дневник подтянется.</li><li>Там мы сами предложим включить уведомления — нажмите «Разрешить».</li></ol>`;
+      mainText = 'Как добавить на экран «Домой»'; main = () => { HF.closeDialog($('#pushSheet')); openInstall(); };
+    } else if (kind === 'inapp') {
+      body = head('Откройте в обычном браузере', 'Вы открыли ссылку внутри мессенджера — там уведомления не работают.')
+        + `<ol class="steps">${isIOS ? '<li>Нажмите <b>«•••»</b> или значок компаса и выберите <b>«Открыть в Safari»</b>.</li><li>В Safari добавьте Healthy Fit на экран «Домой» и включите уведомления.</li>' : '<li>Нажмите <b>«⋮»</b> справа вверху и выберите <b>«Открыть в браузере»</b> (Chrome).</li><li>Войдите и нажмите «Включить уведомления».</li>'}</ol>`;
+      mainText = 'Скопировать ссылку'; main = async () => { try { await navigator.clipboard.writeText(location.origin); HF.toast('Ссылка скопирована — вставьте её в Safari или Chrome'); } catch { HF.toast(location.origin); } };
+    } else if (kind === 'denied') {
+      body = head('Уведомления запрещены', 'Когда-то на запрос нажали «Запретить» — теперь включить их можно только в настройках телефона.')
+        + `<ol class="steps">${isIOS ? '<li>Откройте <b>Настройки</b> iPhone → <b>Уведомления</b>.</li><li>Найдите в списке <b>Healthy Fit</b> → включите <b>«Допуск уведомлений»</b>.</li><li>Вернитесь в приложение — всё заработает само.</li>'
+          : isAndroid ? '<li>Нажмите на значок <b>замка</b> (или «⋮» → «Настройки сайта») рядом с адресом.</li><li><b>Разрешения → Уведомления → Разрешить</b>.</li><li>Если приложение установлено: Настройки телефона → Приложения → Healthy Fit → Уведомления.</li><li>Вернитесь сюда — нажмите «Проверить».</li>'
+          : '<li>Нажмите на значок <b>замка</b> слева от адреса сайта.</li><li>Уведомления → <b>Разрешить</b>, затем обновите страницу.</li>'}</ol>`;
+      mainText = 'Проверить ещё раз'; main = async () => { const st = await pushStatus(); if (st === 'denied') HF.toast('Пока запрещены — включите в настройках телефона'); else { HF.closeDialog($('#pushSheet')); if (st === 'off') enablePush(); else renderPushUI(); } };
+    } else if (kind === 'ios-old') {
+      body = head('Нужна iOS 16.4 или новее', `Сейчас у вас iOS ${Math.floor(iosVer)}.${Math.round(iosVer % 1 * 100)} — она не умеет присылать уведомления от приложений с экрана «Домой». Обновите iPhone: Настройки → Основные → Обновление ПО.`);
+    } else {
+      body = head('Этот браузер не умеет уведомления', 'Откройте Healthy Fit в Chrome на Android или в Safari на iPhone (с экрана «Домой»).');
+    }
+    $('#pushHelpBody').innerHTML = body + `<div class="pa-btns">${main ? `<button class="btn btn-primary" id="paMain" type="button">${mainText}</button>` : ''}<button class="btn btn-ghost" id="paLater" type="button" data-close>${main ? 'Не сейчас' : 'Понятно'}</button></div>`;
+    $('#paMain')?.addEventListener('click', main);
+    $('#paLater').addEventListener('click', () => { lsSet('hf.pushAskAt', String(Date.now())); HF.closeDialog($('#pushSheet')); });
+    HF.openDialog($('#pushSheet'), '#paMain');
+  }
+  // Спрашиваем в моменты, когда уведомления очевидно нужны: добавили друга, написали сообщение, первый запуск с экрана «Домой».
+  // Не чаще раза в 3 дня, не поверх других окон и онбординга.
+  async function maybeAskPush(reason, delay = 900) {
+    if (!me || mock) return;
+    const st = await pushStatus(); if (st === 'on' || st === 'unsupported') return;
+    const firstStandalone = reason === 'standalone' && lsGet('hf.pushAskSA') !== '1';
+    if (!firstStandalone && Date.now() - +(lsGet('hf.pushAskAt') || 0) < 3 * 864e5) return;
+    setTimeout(() => {
+      if (document.querySelector('.sheet-wrap:not([hidden]), #onb:not([hidden]), .cam:not([hidden])')) return;
+      if (reason === 'standalone') lsSet('hf.pushAskSA', '1');
+      lsSet('hf.pushAskAt', String(Date.now())); openPushSheet(st, reason);
+    }, delay);
+  }
+  // в админке видно, у кого и почему нет уведомлений — отправляем, только когда состояние поменялось
+  async function reportPush(st) {
+    if (!me || mock) return; const v = `${st}|${platformName()}`;
+    if (lsGet('hf.pushRep') === `${me.id}:${v}`) return;
+    try { await api('/api/push/state', { method: 'POST', body: { state: st, platform: platformName() } }); lsSet('hf.pushRep', `${me.id}:${v}`); } catch {}
   }
   async function renderPushUI() {
     const st = await pushStatus();
-    const label = { on: 'Включены на этом устройстве', off: 'Выключены', denied: 'Запрещены в настройках', 'ios-install': 'Нужно добавить на экран «Домой»', unsupported: 'Браузер не поддерживает' }[st];
+    const label = { on: 'Включены на этом устройстве', off: 'Выключены', denied: 'Запрещены в настройках телефона', 'ios-install': 'Нужно добавить на экран «Домой»', inapp: 'Откройте в Safari или Chrome', 'ios-old': 'Нужна iOS 16.4+', unsupported: 'Браузер не поддерживает' }[st];
+    reportPush(st);
     const row = $('#pushRow'), card = $('#pushCard');
     if (card) card.hidden = !me;
     if (row) {
@@ -1016,7 +1066,7 @@
       row.innerHTML = `<div><span class="push-dot ${st === 'on' ? 'on' : st === 'denied' ? 'bad' : ''}" aria-hidden="true"></span><b>${label}</b></div>
         <div class="push-btns">${st === 'on' ? '' : `<button class="btn btn-primary btn-sm" id="pushOn">${st === 'off' ? 'Подключить' : 'Как включить'}</button>`}
         <button class="btn btn-ghost btn-sm" id="pushTest"${st === 'on' ? '' : ' hidden'}>Проверить</button></div>`;
-      $('#pushOn')?.addEventListener('click', enablePush);
+      $('#pushOn')?.addEventListener('click', () => st === 'off' ? enablePush() : openPushSheet(st));
       $('#pushTest')?.addEventListener('click', async () => {
         try { await syncPush(true); const r = await api('/api/push/test', { method: 'POST' });
           HF.toast(r.devices ? `Отправили тестовое уведомление на ${r.devices} ${plural(r.devices, 'устройство', 'устройства', 'устройств')} — придёт через пару секунд` : 'Это устройство не подписано — нажмите «Подключить»'); }
@@ -1024,13 +1074,15 @@
     }
     const ban = $('#pushBanner');
     if (ban) {
-      let dismissed = false; try { dismissed = localStorage.getItem('hf.pushBanner') === 'off'; } catch {}
-      ban.hidden = !me || st === 'on' || st === 'unsupported' || dismissed;
+      // крестик прячет плашку на неделю, а не навсегда: без уведомлений человек пропускает сообщения друзей
+      const snoozed = Date.now() - +(lsGet('hf.pushBanAt') || 0) < 7 * 864e5;
+      ban.hidden = !me || st === 'on' || st === 'unsupported' || snoozed;
       if (!ban.hidden) {
-        ban.innerHTML = `<svg aria-hidden="true"><use href="#i-bell"/></svg><div><b>${st === 'ios-install' ? 'Уведомления — с экрана «Домой»' : 'Уведомления о новых сообщениях'}</b></div>
-          <button class="btn btn-primary btn-sm" id="pushBanOn">${st === 'off' ? 'Включить' : 'Как'}</button><button class="icon-btn" id="pushBanX" aria-label="Скрыть"><svg><use href="#i-x"/></svg></button>`;
-        $('#pushBanOn').onclick = enablePush;
-        $('#pushBanX').onclick = () => { try { localStorage.setItem('hf.pushBanner', 'off'); } catch {} ban.hidden = true; };
+        const t = { off: ['Уведомления выключены', 'Не узнаете о новых сообщениях'], denied: ['Уведомления запрещены', 'Покажем, как разрешить'], 'ios-install': ['Уведомления — с экрана «Домой»', 'На iPhone иначе не приходят'], inapp: ['Откройте в Safari или Chrome', 'Здесь уведомлений нет'], 'ios-old': ['Нужна iOS 16.4+', 'Для уведомлений'] }[st] || ['Уведомления', ''];
+        ban.innerHTML = `<svg aria-hidden="true"><use href="#i-bell"/></svg><div><b>${t[0]}</b><small>${t[1]}</small></div>
+          <button class="btn btn-primary btn-sm" id="pushBanOn">${st === 'off' ? 'Включить' : 'Как'}</button><button class="icon-btn" id="pushBanX" aria-label="Скрыть на неделю"><svg><use href="#i-x"/></svg></button>`;
+        $('#pushBanOn').onclick = () => st === 'off' ? enablePush() : openPushSheet(st);
+        $('#pushBanX').onclick = () => { lsSet('hf.pushBanAt', String(Date.now())); ban.hidden = true; };
       }
     }
   }
@@ -1101,6 +1153,7 @@
     get friends() { return friends; },
     get me() { return me; },
     get justRegistered() { return justReg; },
+    askPush: maybeAskPush, openPush: openPushSheet,
     async auth(mode, data) {
       const r = await api(mode === 'reg' ? '/api/auth/register' : '/api/auth/login', { method: 'POST', body: data });
       me = r.me; justReg = mode === 'reg'; if (mode === 'reg') { claimDiary(); await pushProfile(); } else await restoreIfEmpty();

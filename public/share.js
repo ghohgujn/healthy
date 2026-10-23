@@ -40,7 +40,7 @@
           }
           const r = await S().api('/api/invite/accept', { method: 'POST', body: { code } });
           lsSet('hf.ref', null);
-          if (r.state === 'friends' && !r.already) { HF.toast(`${r.user.name} теперь у вас в друзьях 🎉`, 'Открыть', () => window.HFPosts?.openUser(r.user.id), 6000); S().refreshSocial(); }
+          if (r.state === 'friends' && !r.already) { HF.toast(`${r.user.name} теперь у вас в друзьях 🎉`, 'Открыть', () => window.HFPosts?.openUser(r.user.id), 6000); S().refreshSocial(); S().askPush?.('friend', 2500); }
         } catch (e) { if (e.status === 404) { lsSet('hf.ref', null); HF.toast(e.message); } }
       })().finally(() => { accepting = null; });
       await accepting;

@@ -247,15 +247,19 @@
     return m < 2 ? 'в сети' : m < 60 ? `${m} мин назад` : m < 1440 ? `${Math.round(m / 60)} ч назад` : m < 2880 ? 'вчера' : new Date(t).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }); };
   const since = t => new Date(t).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: new Date(t).getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
   let auT = null;
+  // уведомления у человека: включены (и когда последний раз дошли) или почему нет
+  const PUSH_WHY = { off: 'не включил', denied: 'запретил', 'ios-install': 'iPhone не с экрана «Домой»', inapp: 'во встроенном браузере', 'ios-old': 'старая iOS', unsupported: 'браузер не умеет' };
+  const pushTag = p => !p ? '' : p.devices ? `<small class="au-push on" title="${esc(p.platform)}">🔔 ${p.devices} уст.${p.ok ? ` · дошло ${ago(p.ok)}` : ' · ещё не доходили'}</small>`
+    : `<small class="au-push" title="${esc(p.platform)}">🔕 ${PUSH_WHY[p.state] || 'нет данных'}${p.platform ? ` · ${esc(p.platform.split(' · ')[0])}` : ''}</small>`;
   async function loadUsers(term = '') {
     const list = $('#auList');
     try {
       const r = await S().api(`/api/admin/users?q=${encodeURIComponent(term)}`);
-      $('#auStats').innerHTML = [['Всего', r.total], ['Сегодня', r.active1], ['За неделю', r.active7], ['Новых за 7 дн.', r.newWeek]]
+      $('#auStats').innerHTML = [['Всего', r.total], ['Сегодня', r.active1], ['За неделю', r.active7], ['С уведомл.', r.pushOn ?? '—']]
         .map(([l, v]) => `<div><b>${v}</b><span>${l}</span></div>`).join('');
       list.innerHTML = r.users.length ? r.users.map(u => `<li><button class="au-row" data-uid="${u.id}">${S().avaHTML(u)}
         <span class="au-main"><b>${esc(u.name)}${u.admin ? '<i class="au-badge">админ</i>' : ''}</b><small>@${esc(u.username)} · с ${since(u.created)}</small></span>
-        <span class="au-side"><small class="${u.seen && Date.now() - u.seen < 120000 ? 'on' : ''}">${ago(u.seen)}</small><small>${u.posts} публ. · ${u.friends} друз.</small></span></button></li>`).join('')
+        <span class="au-side"><small class="${u.seen && Date.now() - u.seen < 120000 ? 'on' : ''}">${ago(u.seen)}</small><small>${u.posts} публ. · ${u.friends} друз.</small>${pushTag(u.push)}</span></button></li>`).join('')
         : '<li class="sub au-empty">Никого не нашлось</li>';
       list.querySelectorAll('[data-uid]').forEach(b => b.onclick = () => window.HFPosts?.openUser(+b.dataset.uid));
     } catch (e) { list.innerHTML = `<li class="sub au-empty">${esc(e.message)}</li>`; }
