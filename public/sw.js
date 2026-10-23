@@ -1,6 +1,28 @@
-// Healthy Fit — service worker: только пуш-уведомления (ничего не кэширует, чтобы обновления приходили сразу).
+// Healthy Fit — service worker: пуш-уведомления + запасная копия оболочки приложения для работы без сети.
+// Всегда сначала сеть (обновления приходят сразу), кэш — только если сети нет: дневник хранится на телефоне и должен открываться офлайн.
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+
+const SHELL = 'hf-shell-v1';
+const STATIC = /\.(js|css|woff2|png|jpg|svg|webmanifest)$/;
+self.addEventListener('fetch', e => {
+  const r = e.request; if (r.method !== 'GET') return;
+  const u = new URL(r.url);
+  if (u.origin !== self.location.origin || u.pathname.startsWith('/api/') || u.pathname.startsWith('/media/') || u.pathname === '/sw.js') return;
+  const nav = r.mode === 'navigate';
+  if (!nav && !STATIC.test(u.pathname)) return;
+  e.respondWith((async () => {
+    try {
+      const res = await fetch(r);
+      if (res.ok && (!nav || u.pathname === '/')) { const c = await caches.open(SHELL); c.put(nav ? '/' : u.pathname, res.clone()).catch(() => {}); }
+      return res;
+    } catch (err) {
+      const c = await caches.open(SHELL), hit = await c.match(nav ? '/' : u.pathname);
+      if (hit) return hit;
+      throw err;
+    }
+  })());
+});
 
 self.addEventListener('push', e => {
   let d = {};

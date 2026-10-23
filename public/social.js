@@ -159,7 +159,22 @@
       try { me = { ...me, ...(await api('/api/me', { method: 'PATCH', body: { username: v } })).me }; HF.toast(`Теперь вы @${me.username}`); $('#unameHint').textContent = ''; }
       catch (e) { HF.toast(e.message); ui.value = me.username; $('#unameHint').textContent = ''; }
     });
-    $('#logoutBtn').onclick = async () => { await dropPush(); try { await api('/api/auth/logout', { method: 'POST' }); } catch {} me = null; boot(); HF.toast('Вы вышли'); };
+    // выход: сначала дописываем копию в облако, потом стираем дневник с телефона — следующий человек на этом телефоне его не увидит
+    let outArm = 0;
+    $('#logoutBtn').onclick = async () => {
+      const b = $('#logoutBtn');
+      if (Date.now() - outArm > 3000) { outArm = Date.now(); b.textContent = 'Точно выйти?'; setTimeout(() => { if (b.isConnected && Date.now() - outArm >= 2900) b.textContent = 'Выйти'; }, 3100); return; }
+      b.disabled = true; b.textContent = 'Сохраняю…'; clearTimeout(syncT);
+      let saved = true; try { await putSync({ ...HF.db, owner: me.id, days: trimThumbs(HF.db) }); } catch { saved = false; }
+      await dropPush(); try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
+      me = null; justReg = false;
+      if (saved) {
+        const name = ''; HF.db = HF.validDb({ days: {}, profile: { name } }); HF.save(); HF.photos?.clear();
+        for (const k of ['hf.syncAt', 'hf.ref', 'hf.refPost']) try { localStorage.removeItem(k); } catch {}
+        HF.render(); HF.toast('Вы вышли. Дневник сохранён в облаке — войдите, и он вернётся');
+      } else HF.toast('Вы вышли. Нет связи — дневник оставлен на этом телефоне, чтобы ничего не потерять', null, null, 7000);
+      boot();
+    };
   }
 
   let checkT;
@@ -184,7 +199,12 @@
 
   /* ================= cloud backup ================= */
   let syncT;
-  function onSave() { if (!me || DEMO) return; clearTimeout(syncT); syncT = setTimeout(syncUp, 5000); schedulePush(); }
+  let syncDirty = false;
+  function onSave() { if (!me || DEMO) return; syncDirty = true; clearTimeout(syncT); syncT = setTimeout(() => { syncDirty = false; syncUp(); }, 1500); schedulePush(); }
+  // свернули или закрыли приложение — досылаем сразу, не дожидаясь таймера (иначе тренер и второй телефон не увидят последнюю запись)
+  const flushSync = () => { if (syncDirty && me) { syncDirty = false; clearTimeout(syncT); syncUp(); } };
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flushSync(); });
+  addEventListener('pagehide', flushSync);
   async function syncUp() {
     const el = $('#syncInfo');
     try {
@@ -228,13 +248,13 @@
       const r = await api('/api/sync'), local = HF.db; lsSet('hf.syncAt', String(r.at || 0));
       const foreign = local.owner && local.owner !== me.id;
       if (!r.data) { if (foreign) { HF.db = HF.validDb({ days: {} }); HF.db.owner = me.id; HF.save(); HF.render(); } else { local.owner = me.id; syncUp(); } return; }
-      const prev = local;
       const next = foreign ? HF.validDb(r.data) : HF.mergeDb(local, r.data); if (!next) return;
       next.owner = me.id;
       const count = db => Object.values(db.days).reduce((a, d) => a + d.meals.length, 0);
       const added = count(next) - (foreign ? 0 : count(local));
       HF.db = next; HF.save(); HF.render(); syncUp();
-      if (foreign) HF.toast('Загружен дневник этого аккаунта', 'Отменить', () => { HF.db = prev; HF.save(); HF.render(); }, 8000);
+      // без «Отменить»: вернуть чужой дневник значило бы отправить его в облако этого аккаунта
+      if (foreign) HF.toast('Загружен дневник этого аккаунта');
       else if (added > 0) HF.toast(`Из облака добавлено приёмов пищи: ${added}`);
     } catch {}
   }
@@ -401,7 +421,7 @@
       rq.appendChild(d);
     }
     const list = $('#chatList'); list.innerHTML = '';
-    if (!chats.length) list.innerHTML = `<li class="sub chat-empty">Пока нет сообщений. Сфотографируйте еду и нажмите «Поделиться» — или откройте друга сверху.</li>`;
+    if (!chats.length) list.innerHTML = `<li class="sub chat-empty">Пока нет сообщений. Позовите друга по ссылке кнопкой «Позвать» выше — или найдите по логину. Еду можно отправить другу прямо из дневника.</li>`;
     for (const c of chats) {
       const li = document.createElement('li'), b = document.createElement('button'); b.className = 'chat-row' + (c.unread ? ' unread' : '') + (c.peer.bot ? ' is-bot' : '');
       b.innerHTML = `${avaHTML(c.peer)}<span class="cr-main"><b>${esc(c.peer.name)} ${flameBadge(c.peer.flame)}</b><small>${c.last.from === me.id ? 'Вы: ' : ''}${esc(preview(c.last))}</small></span>
@@ -460,12 +480,17 @@
     try {
       const r = await api(`/api/chats/${peer.id}?after=${lastId}`);
       const sc = $('#chatScroll'), atBottom = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80;
+      $('#msgs .chat-hello')?.remove();
       for (const m of r.messages) { appendMsg(m); lastId = Math.max(lastId, m.id); }
+      // пустая переписка — подсказка, с чего начать
+      if (!lastId && !peer.bot && !$('#msgs .chat-hello')) $('#msgs').insertAdjacentHTML('beforeend', `<li class="chat-hello">Напишите ${esc(peer.name)} первым — или отправьте еду из дневника, голосовое или кружок 👋</li>`);
+      if (chatOffline) { chatOffline = false; renderFlame(r.peer?.flame); }
       if (r.peerRead !== peerRead) { peerRead = r.peerRead; markRead(); }
       if (peer.bot) {} else if (!r.friends) $('#chatSub').textContent = 'Вы больше не друзья — писать нельзя'; else renderFlame(r.peer?.flame);
       if (r.messages.length && (atBottom || lastId === r.messages[r.messages.length - 1].id)) sc.scrollTop = sc.scrollHeight;
-    } catch {}
+    } catch (e) { if (e.network) { chatOffline = true; $('#chatSub').textContent = 'Нет связи — сообщения появятся, когда интернет вернётся'; } }
   }
+  let chatOffline = false;
   function renderFlame(f) {
     const sub = $('#chatSub'), ban = $('#flameBanner');
     if (!f || f.state === 'none') {
@@ -519,7 +544,9 @@
     const t = new Date(m.created).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
     if (m.kind === 'text') {
       li.innerHTML = `<div class="bubble"><p></p>${metaHTML(t, mine)}</div>`;
-      const pEl = li.querySelector('p'); pEl.textContent = m.body; pEl.insertAdjacentHTML('beforeend', '<span class="meta-sp" aria-hidden="true"></span>');
+      // ссылки кликабельны: текст экранируем, а http(s)-адреса превращаем в <a> (только http/https — никаких javascript:)
+      const pEl = li.querySelector('p'); pEl.innerHTML = esc(m.body).replace(/https?:\/\/[^\s<]+[^\s<.,:;!?)»"']/g, u => `<a class="msg-link" href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`);
+      pEl.insertAdjacentHTML('beforeend', '<span class="meta-sp" aria-hidden="true"></span>');
       if (/^\p{Extended_Pictographic}{1,3}$/u.test(m.body.trim())) li.classList.add('emoji-only');
     }
     else if (m.kind === 'meal' || m.kind === 'post') {
@@ -843,7 +870,7 @@
   async function shareMeal(d) {
     if (!me) { HF.toast('Войдите, чтобы делиться с друзьями'); HF.showTab('chats'); return; }
     shareData = d; picked.clear(); toProfile = false; $('#shareText').value = '';   // ничего не выбрано заранее — человек сам решает, куда отправить
-    $('#shareTitle').textContent = d.post ? 'Отправить публикацию' : d.day ? 'Выложить день' : 'Отправить другу';
+    $('#shareTitle').textContent = d.post ? 'Поделиться публикацией' : d.day ? 'Выложить день' : 'Поделиться';
     $('#sharePreview').innerHTML = d.day
       ? `<span class="sp-stack">${d.thumbs.slice(0, 4).map((t, i) => `<img src="${esc(t)}" alt="" style="--i:${i}">`).join('')}</span><span><b></b><small>${d.meals.length} ${((n) => n % 10 === 1 && n % 100 !== 11 ? 'приём' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'приёма' : 'приёмов')(d.meals.length)} пищи · ${Math.round(d.totals.kcal)} ккал · Б ${Math.round(d.totals.p)} · Ж ${Math.round(d.totals.f)} · У ${Math.round(d.totals.c)}</small></span>`
       : `${d.thumb ? `<img src="${esc(d.thumb)}" alt="">` : ''}<span><b></b><small>${Math.round(d.totals.kcal)} ккал · Б ${Math.round(d.totals.p)} · Ж ${Math.round(d.totals.f)} · У ${Math.round(d.totals.c)}</small></span>`;
@@ -902,7 +929,7 @@
       for (const id of picked) await api(`/api/chats/${id}`, { method: 'POST', body: { kind: 'meal', media, meta, body } });
       HF.closeDialog($('#shareSheet'));
       const saved = d.onSent?.();
-      const what = toProfile && picked.size ? `Опубликовано и отправлено ${picked.size}` : toProfile ? 'Опубликовано в профиле' : picked.size > 1 ? `Отправлено ${picked.size} друзьям` : 'Отправлено';
+      const what = toProfile && picked.size ? `Опубликовано · отправлено ${picked.size === 1 ? 'другу' : picked.size + ' друзьям'}` : toProfile ? 'Опубликовано в профиле' : picked.size > 1 ? `Отправлено ${picked.size} друзьям` : 'Отправлено';
       if (newPost) HF.toast(saved?.isNew ? `${what} · добавлено в дневник` : what, 'В Telegram и др.', () => sharePost(newPost), 7000);
       else HF.toast(saved?.isNew ? `${what} · добавлено в дневник` : what);
       refreshSocial(); window.HFPosts?.refresh();

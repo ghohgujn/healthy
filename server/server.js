@@ -990,7 +990,7 @@ async function api(req, res, url) {
     const m = b.media && q('SELECT * FROM media WHERE id = ? AND owner = ?').get(String(b.media), me.id);
     if (!m || !m.type.startsWith('image/')) throw fail(400, 'Нужна фотография');
     const x = b.meta && typeof b.meta === 'object' ? b.meta : {};
-    const meta = JSON.stringify({ title: String(x.title || '').slice(0, 80), kcal: num(x.kcal), p: num(x.p), f: num(x.f), c: num(x.c),
+    const meta = JSON.stringify({ title: (t => t.length > 160 ? t.slice(0, 159).replace(/[\s,;]+\S*$/, '') + '…' : t)(String(x.title || '').trim()), kcal: num(x.kcal), p: num(x.p), f: num(x.f), c: num(x.c),
       items: objs(x.items).slice(0, 12).map(i => ({ name: String(i.name || '').slice(0, 40), grams: num(i.grams) })),
       ...(objs(x.meals).length ? { day: true, meals: objs(x.meals).slice(0, 10).map(i => ({ title: String(i.title || '').slice(0, 80), kcal: num(i.kcal), p: num(i.p), f: num(i.f), c: num(i.c), time: String(i.time || '').slice(0, 5) })) } : {}) });
     // мультипост «мой день»: до 10 фото, у каждого — своя карточка блюда в meta.meals
@@ -1167,7 +1167,7 @@ async function api(req, res, url) {
         meta = JSON.stringify({ title: pm2.title || '', kcal: num(pm2.kcal), p: num(pm2.p), f: num(pm2.f), c: num(pm2.c), postId: postRef.id, author: au ? { name: au.name, username: au.username } : null });
       } else if (b.meta && typeof b.meta === 'object') {
         const x = b.meta;
-        meta = JSON.stringify({ title: String(x.title || '').slice(0, 80), kcal: num(x.kcal), p: num(x.p), f: num(x.f), c: num(x.c),
+        meta = JSON.stringify({ title: (t => t.length > 160 ? t.slice(0, 159).replace(/[\s,;]+\S*$/, '') + '…' : t)(String(x.title || '').trim()), kcal: num(x.kcal), p: num(x.p), f: num(x.f), c: num(x.c),
           items: objs(x.items).slice(0, 12).map(i => ({ name: String(i.name || '').slice(0, 40), grams: num(i.grams) })),
           dur: Math.min(600, num(x.dur)) });
       }

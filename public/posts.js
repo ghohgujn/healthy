@@ -61,7 +61,7 @@
       const u = r.user, streak = HF.streakInfo().count;
       $('#profStats').innerHTML = `<span><b>${u.postsCount}</b>${plural(u.postsCount, 'публикация', 'публикации', 'публикаций')}</span>
         <span><b>${u.friendsCount}</b>${plural(u.friendsCount, 'друг', 'друга', 'друзей')}</span><span><b>${streak}</b>серия</span>`;
-      if (ptab === 'posts') { $('#profPosts').innerHTML = grid(r.posts, 'Сфотографируйте еду и нажмите «Поделиться» → «В мой профиль». Публикации видят только друзья.'); bindGrid($('#profPosts')); }
+      if (ptab === 'posts') { $('#profPosts').innerHTML = grid(r.posts, 'Сфотографируйте еду и нажмите «Поделиться» → «В профиль». Кто увидит — все или только друзья — выбираете при публикации.'); bindGrid($('#profPosts')); }
     } catch {}
   }
   $('#profTabs').querySelectorAll('[data-ptab]').forEach(b => b.onclick = () => { ptab = b.dataset.ptab; renderOwn(); });
@@ -126,7 +126,9 @@
       const tot = meals.reduce((a, m) => ({ kcal: a.kcal + m.t.kcal, p: a.p + m.t.p, f: a.f + m.t.f, c: a.c + m.t.c }), { kcal: 0, p: 0, f: 0, c: 0 });
       rows.push({ k, meals, tot, goal: (+st.goal || 2000) + bonus, water: v.water || 0, acts: (v.acts || []).length, today: i === 0 });
     }
-    const done = rows.filter(r => r.meals.length && (!r.today || r.tot.kcal >= r.goal * 0.7)), avg = f => done.length ? done.reduce((a, r) => a + f(r), 0) / done.length : 0;
+    // незаконченный сегодняшний день в среднее не берём — но если других дней нет, считаем по нему, а не показываем «0/0»
+    let done = rows.filter(r => r.meals.length && (!r.today || r.tot.kcal >= r.goal * 0.7)); if (!done.length) done = rows.filter(r => r.meals.length);
+    const avg = f => done.length ? done.reduce((a, r) => a + f(r), 0) / done.length : 0;
     const inNorm = done.filter(r => Math.abs(r.tot.kcal - r.goal) <= r.goal * 0.1).length;
     const ws = (d.weights || []).filter(w => w.date >= rows[rows.length - 1].k), wLast = (d.weights || []).at(-1), wd = ws.length > 1 ? Math.round((ws.at(-1).kg - ws[0].kg) * 10) / 10 : null;
     const tile = (l, v, sub) => `<div class="cd-tile"><small>${l}</small><b>${v}</b>${sub ? `<span>${sub}</span>` : ''}</div>`;
@@ -136,7 +138,7 @@
       ${tile('Белок', `${r0(avg(r => r.tot.p) / (+st.p || 120) * 100)}%`, `от ${st.p || 120} г`)}
       ${tile('Вода', `${r0(rows.reduce((a, r) => a + Math.min(1.5, r.water / (+st.waterGoal || 2000)), 0) / n * 100)}%`, 'от нормы')}
       ${tile('Тренировки', `${rows.reduce((a, r) => a + r.acts, 0)}`, `за ${n} дн.`)}
-      ${tile('Вес', wLast ? `${String(wLast.kg).replace('.', ',')}` : '—', wd !== null ? `${wd > 0 ? '+' : wd < 0 ? '−' : ''}${String(Math.abs(wd)).replace('.', ',')} кг за период${prof.target ? ` · цель ${prof.target}` : ''}` : prof.target ? `цель ${prof.target} кг` : 'не записан')}
+      ${tile('Вес', wLast ? `${String(wLast.kg).replace('.', ',')}` : prof.weight ? `${String(prof.weight).replace('.', ',')}` : '—', wd !== null ? `${wd > 0 ? '+' : wd < 0 ? '−' : ''}${String(Math.abs(wd)).replace('.', ',')} кг за период${prof.target ? ` · цель ${prof.target}` : ''}` : wLast ? (prof.target ? `цель ${prof.target} кг` : 'кг') : prof.weight ? 'из анкеты, взвешиваний нет' : 'не записан')}
     </div>`;
     const dayHTML = r => {
       const ok = r.meals.length && Math.abs(r.tot.kcal - r.goal) <= r.goal * 0.1, over = r.tot.kcal > r.goal * 1.1;
@@ -346,8 +348,8 @@
   function setReply(c) {
     replyTo = c;
     $('#replyChip').hidden = !c;
-    $('#commentInput').placeholder = c ? `Ответ для @${c.author.username}` : 'Комментарий…';
-    if (c) { $('#replyChipText').textContent = `Ответ для ${c.author.name}`; $('#commentInput').focus(); }
+    $('#commentInput').placeholder = c ? `Ответ @${c.author.username}` : 'Комментарий…';
+    if (c) { $('#replyChipText').textContent = `Ответ: ${c.author.name}`; $('#commentInput').focus(); }
   }
   $('#replyCancel').onclick = () => setReply(null);
   function bindComments() {

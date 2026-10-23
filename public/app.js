@@ -70,6 +70,7 @@
       put: (id, data) => tx('readwrite', st => st.put({ data, at: Date.now() }, id)).catch(() => {}),
       get: id => tx('readonly', st => st.get(id)).then(v => v?.data || '').catch(() => ''),
       // старше 30 дней — удаляем, чтобы не копить
+      clear: () => tx('readwrite', st => st.clear()).catch(() => {}),
       prune: () => tx('readwrite', st => { const c = st.openCursor(); c.onsuccess = () => { const cur = c.result; if (!cur) return; if (Date.now() - cur.value.at > 30 * 864e5) cur.delete(); cur.continue(); }; }).catch(() => {}),
     };
   })();
@@ -128,6 +129,7 @@
     const len = 2 * Math.PI * +el.getAttribute('r');
     el.style.strokeDasharray = `${len}`;
     el.style.strokeDashoffset = `${len * (1 - Math.max(0, Math.min(1, frac)))}`;
+    el.classList.toggle('ring-zero', !(frac > 0.004));   // пустое кольцо без «точки» от скруглённого конца
   }
 
   /* ---------- render ---------- */
@@ -234,7 +236,7 @@
       b.querySelector('.meal-title').textContent = m.name;
       b.querySelector('.meal-time').textContent = `${m.type} · ${time}`;
       b.onclick = () => openMeal(m);
-      if (m.id === freshMeal) { li.classList.add('fresh'); freshMeal = null; }
+      if (m.id === freshMeal) { li.classList.add('fresh'); freshMeal = null; setTimeout(() => { const y = li.getBoundingClientRect().top - innerHeight * 0.3; if (Math.abs(y) > 40) scrollBy({ top: y, behavior: 'smooth' }); }, 350); }   // показать, куда легла запись (выше всплывающей подсказки)
       li.appendChild(b); list.appendChild(li);
     }
   }
@@ -1194,7 +1196,7 @@
     vb.onclick = pick;
     document.addEventListener('pointerdown', e => { if (open && !e.target.closest('#fabVoice, #openCamera')) hide(); }, true);
     document.addEventListener('keydown', e => { if (open && e.key === 'Escape') hide(); });
-    try { if (!localStorage.getItem('hf.fabHint2')) setTimeout(() => { if (!stack.length && tab === 'today') { toast('Удерживайте камеру — можно записать еду голосом'); localStorage.setItem('hf.fabHint2', '1'); } }, 2500); } catch {}
+    try { if (!localStorage.getItem('hf.fabHint2')) setTimeout(() => { if (!stack.length && tab === 'today' && $('#onb')?.hidden !== false) { toast('Удерживайте камеру — можно записать еду голосом'); localStorage.setItem('hf.fabHint2', '1'); } }, 2500); } catch {}
   }
 
   /* ---------- «Назад»: закрыть верхнее окно или вернуться на прошлую вкладку ---------- */
@@ -1241,6 +1243,8 @@
       if (document.querySelector('#onb:not([hidden]), .fab-goo.open')) return;
       for (let i = stack.length - 1; i >= 0; i--) if (stack[i].el.hidden) stack.splice(i, 1);   // «зависшие» закрытые окна не должны блокировать листание
       const top = stack[stack.length - 1]?.el;
+      // несохранённый результат распознавания свайпом не закрываем: случайный жест стоил бы повторного запроса к нейросети
+      if (top?.id === 'mealSheet' && draft && !draft.editing) return;
       const sc = hScroller(tg);
       if (top) g = { mode: 'back', sc, x: t.clientX, y: t.clientY, t: performance.now(), dx: 0, lock: 0, el: top.matches('.chat, .uview') ? top : null };
       else g = { mode: 'tabs', sc, x: t.clientX, y: t.clientY, t: performance.now(), dx: 0, lock: 0, el: tabEl(tab), i: TAB_ORDER.indexOf(tab) };
@@ -1368,7 +1372,7 @@
   // фокус в поле внутри окна — iOS любит прокрутить саму страницу; возвращаем её на место
   document.addEventListener('focusin', e => { if (e.target.closest?.('.chat, .sheet-wrap, .uview')) setTimeout(() => { if (scrollY && stack.length) scrollTo(0, 0); syncViewport(); }, 60); });
 
-  window.HF = { goBack, closeOverlays, renderStats, get draft() { return draft; }, mealTitle: () => $('#mealName').textContent, setInert, get db() { return db; }, set db(v) { db = v; }, validDb, mergeDb, save, day, mealTotals, openDialog, closeDialog, toast, render, streakInfo, keyOf, today, showTab, loadImage, paintAvatar, actKcal };
+  window.HF = { photos, goBack, closeOverlays, renderStats, get draft() { return draft; }, mealTitle: () => $('#mealName').textContent, setInert, get db() { return db; }, set db(v) { db = v; }, validDb, mergeDb, save, day, mealTotals, openDialog, closeDialog, toast, render, streakInfo, keyOf, today, showTab, loadImage, paintAvatar, actKcal };
 
   /* ---------- day rollover ---------- */
   function rollDay() {

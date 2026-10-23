@@ -233,11 +233,21 @@
   // ряд кнопок; get() отдаёт { url, text, image? } — ссылка и карточка готовятся при первом касании
   function appsRow(get, opts = {}) {
     const row = document.createElement('div'); row.className = 'ext-row'; row.setAttribute('role', 'group'); row.setAttribute('aria-label', 'Поделиться в приложениях');
-    const items = [...APPS.map(a => ({ ...a, go: async () => { const d = await get(); open(a.url(d.url, d.text), '_blank', 'noopener'); } }))];
-    if (opts.image && canFiles()) items.push({ id: 'img', label: 'Картинкой', ico: 'i-image', go: async () => { const d = await get(true); if (!d.image) throw new Error('Не получилось собрать картинку');
+    // iOS разрешает открыть окно или системное «Поделиться» только сразу по касанию, без пауз на сеть.
+    // Поэтому ссылку и картинку готовим заранее, а по касанию берём уже готовое; не успели — сначала открываем пустую вкладку.
+    let last = null, lastImg = null;
+    const warm = (img) => get(img).then(d => { last = d; if (d.image) lastImg = d; return d; });
+    warm(!!opts.image).catch(() => {});
+    const items = [...APPS.map(a => ({ ...a, go: async () => {
+      if (last) { open(a.url(last.url, last.text), '_blank', 'noopener'); return; }
+      const w = open('about:blank', '_blank'); const d = await warm(); const u = a.url(d.url, d.text);
+      if (w && !w.closed) w.location.href = u; else location.href = u;
+    } }))];
+    if (opts.image && canFiles()) items.push({ id: 'img', label: 'Картинкой', ico: 'i-image', go: async () => {
+      const d = lastImg || await warm(true); if (!d.image) throw new Error('Не получилось собрать картинку');
       await navigator.share({ files: [dataToFile(d.image, 'healthy-fit.jpg')], text: `${d.text}\n${d.url}` }); } });
-    if (navigator.share) items.push({ id: 'more', label: 'Ещё', ico: 'i-dots-h', go: async () => { const d = await get(); await navigator.share({ title: 'Healthy Fit', text: d.text, url: d.url }); } });
-    items.push({ id: 'copy', label: 'Ссылка', ico: 'i-link', go: async () => { const d = await get(); await copy(d.url); HF.toast('Ссылка скопирована'); } });
+    if (navigator.share) items.push({ id: 'more', label: 'Ещё', ico: 'i-dots-h', go: async () => { const d = last || await warm(); await navigator.share({ title: 'Healthy Fit', text: d.text, url: d.url }); } });
+    items.push({ id: 'copy', label: 'Ссылка', ico: 'i-link', go: async () => { const d = last || await warm(); await copy(d.url); HF.toast('Ссылка скопирована'); } });
     for (const a of items) {
       const b = document.createElement('button'); b.type = 'button'; b.className = `ext-app ext-${a.id}`;
       b.innerHTML = `<span class="ext-ico"><svg aria-hidden="true"><use href="#${a.ico}"/></svg></span><span>${a.label}</span>`;

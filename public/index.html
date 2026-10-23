@@ -330,7 +330,7 @@
         </div>
 
         <div class="error" id="mealError" hidden>
-          <p class="h2">Не получилось</p>
+          <p class="h2">Что-то пошло не так</p>
           <p class="sub" id="mealErrorText"></p>
           <div class="row-btns">
             <button class="btn btn-ghost" id="retryBtn"><svg><use href="#i-refresh"/></svg>Ещё раз</button>
@@ -348,6 +348,10 @@
             <div class="total"><i style="--c: var(--color-carb)"></i><b id="tC">0</b><span>углев.</span></div>
           </div>
 
+          <div class="question" id="question" hidden>
+            <p class="q-text" id="qText"></p>
+            <div class="chips" id="qOptions"></div>
+          </div>
           <div class="refine" id="refine">
             <label class="refine-lbl" for="caption"><svg aria-hidden="true"><use href="#i-spark"/></svg>Подсказать нейросети</label>
             <div class="refine-box">
@@ -362,11 +366,6 @@
           <div class="portion" role="radiogroup" aria-labelledby="portionLbl">
             <span class="field-label" id="portionLbl">Сколько съели</span>
             <div class="seg portion-seg" id="portion"></div>
-          </div>
-
-          <div class="question" id="question" hidden>
-            <p class="q-text" id="qText"></p>
-            <div class="chips" id="qOptions"></div>
           </div>
 
           <ul class="items" id="items"></ul>
